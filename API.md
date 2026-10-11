@@ -105,6 +105,10 @@ Approving, rejecting or deleting a submission deletes its photo.
 
 - `POST /api/trackaddict/parse` — body is a raw TrackAddict CSV log (no multipart); returns its laps with times and distances. Lap 0 is the pre-start segment, not a run. A lap that starts from a standstill (a drag-mode run) also carries `acceleration`: 0-30 and 0-60 interpolated from the GPS speed trace, plus the 1/8 and 1/4 mile times and trap speeds from the log's 200 m and 400 m sector markers
 
+## Stats
+
+- `GET /api/stats` — public aggregate counts for the project page on romangarms.com: `devices`, how many installs have ever minted a device token. Counts only, never a row
+
 ## Pages
 
 - `GET /` and `GET /app` — the public landing page

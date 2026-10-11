@@ -2279,6 +2279,20 @@ async def parse_trackaddict(request: Request):
     return parsed
 
 
+@app.get("/api/stats")
+def stats():
+    """Aggregate counts for the project page on romangarms.com.
+
+    Public and deliberately a dead end: counts only, never a row, so it says
+    how many people use the app without saying anything about any one of them.
+    Every install mints a device token on first launch, so devices is the
+    closest thing the server has to a user count.
+    """
+    with db.session() as conn:
+        devices = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+    return {"devices": devices}
+
+
 @app.get("/", include_in_schema=False)
 @app.get("/app", include_in_schema=False)
 def landing():
