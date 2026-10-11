@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -144,6 +145,10 @@ CREATE TABLE IF NOT EXISTS submissions (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     reviewed_at TEXT
 );
+CREATE TABLE IF NOT EXISTS known_devices (
+    token_hash TEXT PRIMARY KEY,
+    first_seen TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 # Columns added after the first release. SQLite's ALTER TABLE can't add a
@@ -166,11 +171,36 @@ ADDED_COLUMNS = [
 ]
 
 
+# known_devices outlives pruning, so it is the one place a device is remembered
+# forever. It holds a digest rather than the token itself: the count is all
+# anyone needs from it, and a durable table of live credentials is not worth
+# keeping to get that.
+def device_fingerprint(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+# Seed known_devices from whatever devices still holds. Only runs while it is
+# empty, so it happens once -- on the release that introduced it, and again if
+# it is ever wiped. Devices pruned before that release are already gone and
+# cannot be recovered, so the lifetime count starts from this point.
+def _seed_known_devices(conn: sqlite3.Connection) -> None:
+    if conn.execute("SELECT EXISTS(SELECT 1 FROM known_devices)").fetchone()[0]:
+        return
+    conn.executemany(
+        "INSERT OR IGNORE INTO known_devices (token_hash) VALUES (?)",
+        [
+            (device_fingerprint(row["token"]),)
+            for row in conn.execute("SELECT token FROM devices")
+        ],
+    )
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     for table, column, decl in ADDED_COLUMNS:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    _seed_known_devices(conn)
     conn.commit()
 
 

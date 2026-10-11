@@ -174,6 +174,12 @@ def _record_device(conn, token: str) -> None:
                last_seen = excluded.last_seen""",
         (token,),
     )
+    # Survives _prune_devices, so the lifetime count keeps a phone that has
+    # gone quiet and does not count it twice if it comes back.
+    conn.execute(
+        "INSERT OR IGNORE INTO known_devices (token_hash) VALUES (?)",
+        (db.device_fingerprint(token),),
+    )
 
 
 # Every column a device token or account id is stored in.
@@ -198,6 +204,16 @@ _last_prune = 0.0
 # once they go stale or the table fills with them. A dropped device loses
 # nothing: its row comes back the next time it calls.
 def _prune_devices(conn) -> None:
+    # Nothing leaves the devices table without being remembered first. Rows can
+    # arrive without going through _record_device (_people backfills tokens it
+    # finds on old posts), so this is the one place that catches all of them.
+    conn.executemany(
+        "INSERT OR IGNORE INTO known_devices (token_hash) VALUES (?)",
+        [
+            (db.device_fingerprint(row["token"]),)
+            for row in conn.execute("SELECT token FROM devices")
+        ],
+    )
     idle = f"""user_id IS NULL AND label IS NULL
                AND id NOT IN (SELECT device_id FROM push_registrations)
                AND token NOT IN (SELECT id FROM ({_IDENTITIES}) WHERE id IS NOT NULL)"""
@@ -2285,12 +2301,22 @@ def stats():
 
     Public and deliberately a dead end: counts only, never a row, so it says
     how many people use the app without saying anything about any one of them.
-    Every install mints a device token on first launch, so devices is the
-    closest thing the server has to a user count.
+
+    Both count phones that called an endpoint reading their token. The app
+    does that on every launch (AppModel.start loads the account), so in
+    practice that is every install -- but never a phone that only ever used
+    the Speedhive reads, which take no actor.
+
+    devices is the live table: roughly the phones seen in the last
+    IDLE_DEVICE_DAYS, since _prune_devices drops an idle one that never signed
+    in, posted, or turned on notifications. installs is the lifetime count,
+    which pruning does not touch; it starts from the release that added
+    known_devices, as devices pruned before then are gone for good.
     """
     with db.session() as conn:
         devices = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
-    return {"devices": devices}
+        installs = conn.execute("SELECT COUNT(*) FROM known_devices").fetchone()[0]
+    return {"devices": devices, "installs": installs}
 
 
 @app.get("/", include_in_schema=False)

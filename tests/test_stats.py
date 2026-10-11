@@ -1,15 +1,84 @@
+import app
+import db
+
+TOKEN = "test-device-stats-000000"
+
+
+def call_as_device(client, token: str = TOKEN):
+    """Any endpoint that reads the token records the device; the app's launch
+    path (AppModel.start -> loadAccount) hits this one."""
+    return client.get("/api/account", headers={"Authorization": f"Bearer {token}"})
+
+
+def go_idle_and_prune():
+    with db.session() as conn:
+        conn.execute(
+            "UPDATE devices SET last_seen = datetime('now', ?)",
+            (f"-{app.IDLE_DEVICE_DAYS + 1} days",),
+        )
+        app._prune_devices(conn)
+
+
 def test_stats_are_public_and_count_devices(client, device):
-    assert client.get("/api/stats").json() == {"devices": 0}
+    assert client.get("/api/stats").json() == {"devices": 0, "installs": 0}
 
     device("alice")
     device("bob", signed_in=False)
 
-    assert client.get("/api/stats").json() == {"devices": 2}
+    assert client.get("/api/stats").json()["devices"] == 2
 
 
-def test_stats_carry_nothing_but_counts(client, device):
-    device("alice")
+def test_a_device_added_behind_the_server_is_remembered_by_the_next_prune(
+    client, device
+):
+    # _people backfills device rows for tokens it finds on old posts, so a row
+    # can appear without _record_device ever seeing it.
+    device("alice", signed_in=False)
+    go_idle_and_prune()
 
-    body = client.get("/api/stats").json()
+    assert client.get("/api/stats").json() == {"devices": 0, "installs": 1}
 
-    assert set(body) == {"devices"}
+
+def test_stats_carry_nothing_but_counts(client):
+    call_as_device(client)
+
+    assert set(client.get("/api/stats").json()) == {"devices", "installs"}
+
+
+def test_installs_survive_pruning(client):
+    call_as_device(client)
+    assert client.get("/api/stats").json() == {"devices": 1, "installs": 1}
+
+    go_idle_and_prune()
+
+    # The live table forgets the phone; the lifetime count does not.
+    assert client.get("/api/stats").json() == {"devices": 0, "installs": 1}
+
+
+def test_a_pruned_device_coming_back_is_not_counted_twice(client):
+    call_as_device(client)
+    go_idle_and_prune()
+
+    call_as_device(client)
+
+    assert client.get("/api/stats").json() == {"devices": 1, "installs": 1}
+
+
+def test_installs_count_distinct_devices(client):
+    call_as_device(client, "test-device-stats-aaaaaa")
+    call_as_device(client, "test-device-stats-aaaaaa")
+    call_as_device(client, "test-device-stats-bbbbbb")
+
+    assert client.get("/api/stats").json()["installs"] == 2
+
+
+def test_known_devices_holds_a_digest_not_the_token(client):
+    call_as_device(client)
+
+    with db.session() as conn:
+        stored = [
+            row["token_hash"] for row in conn.execute("SELECT * FROM known_devices")
+        ]
+
+    assert stored == [db.device_fingerprint(TOKEN)]
+    assert TOKEN not in stored

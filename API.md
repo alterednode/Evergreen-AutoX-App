@@ -107,7 +107,11 @@ Approving, rejecting or deleting a submission deletes its photo.
 
 ## Stats
 
-- `GET /api/stats` — public aggregate counts for the project page on romangarms.com: `devices`, how many installs have ever minted a device token. Counts only, never a row
+- `GET /api/stats` — public aggregate counts for the project page on romangarms.com. Counts only, never a row:
+  - `devices` — the live devices table: roughly the phones seen in the last 90 days, since an idle one that never signed in, posted or turned on notifications is pruned
+  - `installs` — the lifetime count, which pruning does not touch. Kept in `known_devices` as a SHA-256 of the token, not the token itself, and seeded from `devices` when it was introduced, so phones pruned before that release are not in it
+
+  Both only see a phone once it calls an endpoint that reads its token. The app does that on every launch, but a client that only used the Speedhive reads would never appear.
 
 ## Pages
 
