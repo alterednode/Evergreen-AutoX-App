@@ -18,13 +18,13 @@ The bundle ID (`com.romangarms.Evergreen-AutoX-App-iOS`) stays; it is never show
 
 ## TestFlight → Test Information
 
-Current build: **1.5 (2)**. External testing sends the first build of each version through Beta App
+Current build: **1.5 (3)**. External testing sends the first build of each version through Beta App
 Review, so fill in all of this before adding the build to an external group.
 
 **Beta App Description** (testers see this on the invite)
 
 ```text
-AutoX Live puts autocross timing in your pocket. Open an event to see results as they post, with live results refreshing on their own during the event. Star your friends to follow just their runs and the gaps between you, compare any two drivers head-to-head, and post your own best times to community leaderboards.
+AutoX Live puts autocross timing in your pocket. Open an event to see results as they post, with live results refreshing on their own during the event. Star your friends to follow just their runs and the gaps between you, compare any two drivers head-to-head, and post your own best times to community leaderboards. Turn on notifications to hear the moment a new time posts for you or your friends, and glance at your last run and your friends' times on Apple Watch.
 
 This is an early beta from an independent developer. It is not affiliated with any event organizer, club, or timing provider. Results come from the organizers' public timing feeds, so an event shows up once its organizer publishes it.
 ```
@@ -39,15 +39,18 @@ This is an early beta from an independent developer. It is not affiliated with a
 Thanks for testing AutoX Live 1.5!
 
 New in this build:
-- Live results now refresh themselves every 10 seconds while you have an event open on race day, with no need to pull down. Leave a results page open during an event and check new runs and position changes appear on their own, and that a driver or compare screen you have open follows that driver when their position changes.
-- No log? On the Post a Time sheet tap NO LOG? USE A PHOTO, type the time and pick one photo as proof (a timing slip or the timer display). It shows as WAITING FOR REVIEW, only to you, until we approve it, then appears on the board as yours. Try withdrawing one too.
+- Notifications: on the Setup tab, turn on MY TIMES and/or FRIENDS' TIMES and allow notifications. During an event, check you get a notification when a new time posts for the car you marked as This Is Me or for a car you starred, and that nothing arrives for other cars. They also follow those drivers into the next event by name, so check one arrives there before you open that event in the app. Turn both off and check they stop.
+- Apple Watch: if you have a watch paired, the AutoX Live watch app installs alongside the phone app. Open an event on your phone, mark your car and star a few friends, then check the watch shows your last run on the first page and your friends on the second, and that new runs appear on the watch without opening the phone app.
+
+From 1.5 (2), still worth a look:
+- Live results refresh themselves every 10 seconds while you have an event open on race day. Check new runs and position changes appear on their own, and that a driver or compare screen you have open follows that driver when their position changes.
+- No log? On the Post a Time sheet tap NO LOG? USE A PHOTO, type the time and pick one photo as proof. It shows as WAITING FOR REVIEW, only to you, until we approve it.
 
 Still worth checking:
 - Live tab: open the latest event and switch sessions. Do times and positions match what you saw at the event?
 - Star a few cars, pick This Is Me from one car's ••• menu, then check the Friends tab and the head-to-head compare.
 - Posting needs Sign in with Apple. Sign in from Setup or the first time you post, pick a username if asked, and check your posts are still yours after deleting and reinstalling the app.
 - Boards tab: create a leaderboard or JOIN WITH CODE, post a time from a TrackAddict CSV, then delete it.
-- Boards tab → Acceleration: if you have a TrackAddict drag-run log, post it with POST A TIME and check the 0-60 and quarter-mile numbers against what TrackAddict showed.
 - Turn the system text size up (Settings → Display & Brightness → Text Size) and check nothing is cut off.
 
 Anything confusing, slow, or wrong: screenshot it in TestFlight and send feedback, or email romangarms@gmail.com.
@@ -65,7 +68,11 @@ AutoX Live shows autocross (cone-course time trial) results and lets drivers pos
 
 Where to look: the app opens on the newest event (Live tab). The Events tab lists all events. The Boards tab holds the user-created leaderboards. The Acceleration board at the top of that tab ranks 0-60 and quarter-mile times; users post to it by importing a drag-run log recorded with the TrackAddict app, and it carries a notice that times are from drag strips and closed courses.
 
-Live results: while an event dated today or yesterday is open, the results page reloads itself every 10 seconds so new runs appear without pulling to refresh. Our server caches each answer from the timing provider, so this does not add load on the organizers' feeds.
+Live results: while an event dated today or yesterday is open, the results page reloads itself every 10 seconds so new runs appear without pulling to refresh. Our server caches the timing provider's answers, so this adds no load on the organizers' feeds.
+
+Notifications are optional: turning on MY TIMES or FRIENDS' TIMES on the Setup tab asks for permission, then our server notifies the user when a new time posts for their own or a starred car. Turning both off deletes the push token and car numbers from our server.
+
+Apple Watch: the included watch app shows the user's last run and starred friends' times for the event open on the phone, read from the same public results, with no sign-in.
 
 Without a log, a time can be typed in with one photo as proof ("NO LOG? USE A PHOTO" on the Post a Time sheet), chosen with the system photo picker. That time is not published: it waits, with its photo, for us to approve it, and shows on the board only to its poster as "WAITING FOR REVIEW". The photo is never shown to other users and is deleted once reviewed.
 
@@ -75,9 +82,9 @@ Data: event results are read from the organizers' publicly available timing resu
 
 User-generated content: before their first post, users must accept community guidelines (no offensive content, closed-course times only). Posts are filtered for objectionable language on the server. Every leaderboard, run, and Acceleration entry has a Report action (… menu), reports go to a moderation queue we review within 24 hours, offending content is removed, and whoever posted it is banned from posting. Users can block a poster from the same menu (Block Creator / Block Poster): that poster's leaderboards and times disappear for them at once and we are notified. Blocks are listed, and can be undone, on the Setup tab. Users can also hide any leaderboard on their device (… menu → Hide Leaderboard). Contact details are on the Support page linked from the Setup tab.
 
-Developer options: a hidden DEV section on the Setup tab (opened by tapping the version line seven times) is for the developer only. It can point the app at a development server, and its Admin Dashboard button opens our server's moderation page in an in-app Safari view, which asks for the server's admin password; without that password it shows nothing beyond the public pages. It is how we approve photo submissions and review reports from a phone. Regular users have no reason to open it and nothing in it is needed to review the app.
+Developer options: a hidden DEV section on the Setup tab (opened by tapping the version line seven times) is for the developer only. It can point the app at a development server, and its Admin Dashboard button opens our server's moderation page in an in-app Safari view, which asks for the admin password and shows nothing beyond the public pages without it. Nothing in it is needed to review the app.
 
-The app requests no permissions in normal use. The local-network usage string exists only for that developer option that points the app at a development server on the LAN.
+The only permission the app asks for is notifications, and only when the user turns them on in Setup. The local-network usage string exists only for that developer option that points the app at a development server on the LAN.
 ```
 
 ---
@@ -91,7 +98,7 @@ The app requests no permissions in normal use. The local-network usage string ex
 **Promotional Text** (170)
 
 ```text
-Follow autocross results as they post, pin your friends to see the gaps, compare runs head-to-head, and post your best times to community leaderboards.
+Follow autocross results live, get notified when you or your friends set a time, see it on Apple Watch, and post your best times to community leaderboards.
 ```
 
 **Description** (4000)
@@ -108,6 +115,14 @@ FRIENDS
 • Star the cars you care about to get a short list of just your people
 • Mark your own car to see your gap to everyone else
 • Give cars nicknames, because "Silver BMW Coupe" is not a name
+
+NOTIFICATIONS
+• Get a notification the moment a new time posts for your car
+• Or for any of your starred friends, even in events you haven't opened yet
+
+APPLE WATCH
+• Your last run and your friends' times right on your wrist
+• Updates on its own during the event
 
 HEAD-TO-HEAD
 • Compare any two drivers side by side
@@ -153,6 +168,8 @@ Data is collected (the server stores posts, the device token, and the Apple sign
 | Identifiers → User ID (Apple's identifier for the signed-in Apple ID) | Yes | Yes | No | App Functionality |
 | Contact Info → Email Address (from Sign in with Apple; may be a relay address) | Yes | Yes | No | App Functionality |
 | User Content → Photos or Videos (the proof photo sent with a hand-typed time) | Yes | Yes | No | App Functionality |
+
+Notifications add no new data type: the push token, the car numbers marked as "me" or starred, and the followed drivers' names are stored against the same device and used only for App Functionality, so they fall under the Device ID row above. The Watch app sends nothing of its own.
 
 Everything else: not collected. The TrackAddict CSV is parsed in memory and not stored, so its GPS data
 does not count as collected location. The proof photo is stored only until it is reviewed, but Apple
