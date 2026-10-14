@@ -1,3 +1,4 @@
+import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
@@ -5,6 +6,7 @@ from html.parser import HTMLParser
 from threading import Lock
 from zoneinfo import ZoneInfo
 
+import db
 import httpx
 
 BASE_URL = "https://gglotus.org/gglotus.org/AXTimes/autoxresults{yyyymmdd}.html"
@@ -162,6 +164,42 @@ def has_results(event: dict) -> bool:
     )
 
 
+def _stored(day: date) -> tuple[dict, bool] | None:
+    with db.session() as conn:
+        row = conn.execute(
+            "SELECT event, final FROM gglc_events WHERE date = ?", (day.isoformat(),)
+        ).fetchone()
+    return (json.loads(row["event"]), bool(row["final"])) if row else None
+
+
+def _stored_days(year: int) -> set[date]:
+    with db.session() as conn:
+        rows = conn.execute(
+            "SELECT date FROM gglc_events WHERE date LIKE ?", (f"{year}-%",)
+        ).fetchall()
+    return {date.fromisoformat(row["date"]) for row in rows}
+
+
+_saved: dict[date, tuple[str, bool]] = {}
+
+
+def save_event(event: dict, source: str, final: bool) -> None:
+    day = date.fromisoformat(event["date"])
+    payload = json.dumps(event, separators=(",", ":"))
+    if _saved.get(day) == (payload, final):
+        return
+    with db.session() as conn:
+        conn.execute(
+            "INSERT INTO gglc_events (date, event, source, final, saved_at)"
+            " VALUES (?, ?, ?, ?, datetime('now'))"
+            " ON CONFLICT(date) DO UPDATE SET event = excluded.event,"
+            " source = excluded.source, final = excluded.final,"
+            " saved_at = excluded.saved_at",
+            (day.isoformat(), payload, source, int(final)),
+        )
+    _saved[day] = (payload, final)
+
+
 def fetch_event(day: date) -> dict | None:
     # Past events never change, so cache them; today's page updates all day,
     # and a page without results may still be filled in later.
@@ -169,11 +207,21 @@ def fetch_event(day: date) -> dict | None:
     if cached is not None:
         return cached
 
+    stored = _stored(day)
+    if stored is not None and stored[1]:
+        _event_cache[day] = stored[0]
+        return stored[0]
+
     url = event_url(day)
-    resp = _http.get(url)
-    if resp.status_code == 404:
-        return None
-    resp.raise_for_status()
+    try:
+        resp = _http.get(url)
+        if resp.status_code == 404:
+            return stored[0] if stored else None
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        if stored:
+            return stored[0]
+        raise
 
     parser = _PageParser()
     parser.feed(resp.text)
@@ -188,8 +236,11 @@ def fetch_event(day: date) -> dict | None:
             parsed for t in parser.tables if (parsed := _parse_table(t)) is not None
         ],
     }
-    if day < today() and has_results(event):
-        _event_cache[day] = event
+    if has_results(event):
+        final = day < today()
+        save_event(event, "gglc", final)
+        if final:
+            _event_cache[day] = event
     return event
 
 
@@ -223,9 +274,12 @@ def _is_listable(day: date) -> bool:
 
 
 def list_events(year: int) -> list[dict]:
+    stored = _stored_days(year)
     with _probe_lock:
         to_probe = [
-            d for d in _candidates(year) if d not in _found and d not in _missing
+            d
+            for d in _candidates(year)
+            if d not in _found and d not in _missing and d not in stored
         ]
         if to_probe:
             with ThreadPoolExecutor(max_workers=8) as pool:
@@ -237,7 +291,7 @@ def list_events(year: int) -> list[dict]:
                     _found.add(day)
                 elif day < today():
                     _missing.add(day)
-        days = sorted((d for d in _found if d.year == year), reverse=True)
+        days = sorted({d for d in _found if d.year == year} | stored, reverse=True)
     with ThreadPoolExecutor(max_workers=8) as pool:
         listable = pool.map(_is_listable, days)
     return [

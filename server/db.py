@@ -149,6 +149,15 @@ CREATE TABLE IF NOT EXISTS submissions (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     reviewed_at TEXT
 );
+-- GGLC deletes old result pages from its site, so every page with results is
+-- kept here. final is set once the event's day has passed.
+CREATE TABLE IF NOT EXISTS gglc_events (
+    date TEXT PRIMARY KEY,
+    event TEXT NOT NULL,
+    source TEXT NOT NULL,
+    final INTEGER NOT NULL DEFAULT 0,
+    saved_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS known_devices (
     token_hash TEXT PRIMARY KEY,
     first_seen TEXT NOT NULL DEFAULT (datetime('now'))
