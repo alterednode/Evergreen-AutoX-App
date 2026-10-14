@@ -3,13 +3,15 @@ set -e
 cd "$(dirname "$0")"
 
 PBXPROJ="Evergreen AutoX App iOS.xcodeproj/project.pbxproj"
+ANDROID_GRADLE="../Evergreen AutoX App Android/app/build.gradle.kts"
 
 usage() {
     cat <<USAGE
 Usage: ./bump-version.sh [build|patch|minor|major|X.Y.Z]
 
 Sets the version and build number in the Xcode project for the next
-TestFlight upload. With no argument, shows the current values and asks
+TestFlight upload, and the same values in the Android app's
+build.gradle.kts. With no argument, shows the current values and asks
 which to bump.
 
   build     Keep the version, increment the build number (most common).
@@ -70,6 +72,13 @@ sed -i '' \
     -e "s/^\([[:space:]]*MARKETING_VERSION = \).*;/\1$new_version;/" \
     -e "s/^\([[:space:]]*CURRENT_PROJECT_VERSION = \).*;/\1$new_build;/" \
     "$PBXPROJ"
+
+if [ -f "$ANDROID_GRADLE" ]; then
+    sed -i '' \
+        -e "s/^val appVersionName = \".*\"/val appVersionName = \"$new_version\"/" \
+        -e "s/^val appBuild = .*/val appBuild = $new_build/" \
+        "$ANDROID_GRADLE"
+fi
 
 echo "Now:     $new_version ($new_build)"
 echo

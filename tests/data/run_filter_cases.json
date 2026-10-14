@@ -1,0 +1,88 @@
+{
+  "speedhive": [
+    {
+      "about": "a queue lap under the ceiling but over twice the fastest is dropped",
+      "laps": ["50.000", "48.200", "3:12.400", "49.100"],
+      "runs": [50.0, 48.2, 49.1]
+    },
+    {
+      "about": "an hours-long grid wait and a lap just over twice the fastest are dropped",
+      "laps": ["1:02:10.000", "45.000", "95.000"],
+      "runs": [45.0]
+    },
+    {
+      "about": "nothing under the 300 second ceiling means no runs",
+      "laps": ["5:10.000", "6:00.000"],
+      "runs": []
+    },
+    {
+      "about": "zero, blank, missing and unparseable lap times are skipped",
+      "laps": ["0", "abc", "", null, "30.500"],
+      "runs": [30.5]
+    },
+    {
+      "about": "exactly twice the fastest is not a run",
+      "laps": ["40.000", "80.000", "79.999"],
+      "runs": [40.0, 79.999]
+    }
+  ],
+  "gglc": {
+    "event": {
+      "date": "2026-08-01",
+      "url": "https://example.com/results",
+      "title": "Test",
+      "updated": "",
+      "classes": [
+        {
+          "name": "Street",
+          "runCount": 3,
+          "drivers": [
+            {
+              "name": "Alex Slow", "car": "12", "make": "Mazda", "model": "Miata", "carClass": "", "indexed": null,
+              "runs": [
+                {"run": 1, "raw": "52.000", "time": 52.0, "cones": 0, "dnf": false, "total": 52.0, "best": true},
+                {"run": 2, "raw": "DNF", "time": null, "cones": 0, "dnf": true, "total": null, "best": false}
+              ]
+            },
+            {
+              "name": "", "car": "", "make": "Honda", "model": "S2000", "carClass": "", "indexed": null,
+              "runs": [
+                {"run": 1, "raw": "49.000+1", "time": 49.0, "cones": 1, "dnf": false, "total": 50.0, "best": true}
+              ]
+            },
+            {
+              "name": "Zed None", "car": "7", "make": "", "model": "", "carClass": "", "indexed": null,
+              "runs": []
+            }
+          ]
+        },
+        {
+          "name": "Modified",
+          "runCount": 3,
+          "drivers": [
+            {
+              "name": "Bea Fast", "car": "3", "make": "Porsche", "model": "Cayman", "carClass": "SM", "indexed": null,
+              "runs": [
+                {"run": 1, "raw": "47.500", "time": 47.5, "cones": 0, "dnf": false, "total": 47.5, "best": true},
+                {"run": 2, "raw": "46.000+2", "time": 46.0, "cones": 2, "dnf": false, "total": 48.0, "best": false}
+              ]
+            },
+            {
+              "name": "Amy None", "car": "88", "make": "", "model": "", "carClass": "", "indexed": null,
+              "runs": [
+                {"run": 1, "raw": "DNF", "time": null, "cones": 0, "dnf": true, "total": null, "best": false}
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "ranked": [
+      {"position": 1, "number": "3", "name": "Bea Fast", "class": "SM", "class_position": 1, "best": 47.5},
+      {"position": 2, "number": "P2", "name": "Honda S2000", "class": "Street", "class_position": 1, "best": 50.0},
+      {"position": 3, "number": "12", "name": "Alex Slow", "class": "Street", "class_position": 2, "best": 52.0},
+      {"position": 4, "number": "88", "name": "Amy None", "class": "Modified", "class_position": 1, "best": null},
+      {"position": 5, "number": "7", "name": "Zed None", "class": "Street", "class_position": 3, "best": null}
+    ]
+  }
+}
