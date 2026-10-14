@@ -249,7 +249,13 @@ fastlane/test_output
 server/leaderboard.db
 server/leaderboard.pre-restore-*.db
 server/proofs/
+server/android/
 
 # iOS deploy credentials
 *.p8
 .deploy.env
+
+# Android release signing (losing the keystore blocks every future update; back it up)
+*.jks
+*.keystore
+release.properties

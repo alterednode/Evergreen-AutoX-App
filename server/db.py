@@ -13,6 +13,10 @@ def proof_dir() -> Path:
     return DB_PATH.parent / "proofs"
 
 
+def android_dir() -> Path:
+    return DB_PATH.parent / "android"
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS courses (
     id INTEGER PRIMARY KEY,

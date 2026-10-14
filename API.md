@@ -113,8 +113,13 @@ Approving, rejecting or deleting a submission deletes its photo.
 
   Both only see a phone once it calls an endpoint that reads its token. The app does that on every launch, but a client that only used the Speedhive reads would never appear.
 
+## Android releases
+
+- `GET /api/android/release` — public. The current Android release from `server/android/release.json`: `version_name`, `version_code`, `sha256` and `size` of the APK, its `file_name`, and `download_url` (`/android`, relative to the server). 404 when there is no release or its APK is missing
+
 ## Pages
 
 - `GET /` and `GET /app` — the public landing page
 - `GET /dev` — the dev console
+- `GET /android` — the current Android APK, downloaded as `AutoX-Live-<version>.apk`; 404 when there is none
 - `GET /support`, `GET /privacy` — the pages the app's Support and Privacy links open

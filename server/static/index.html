@@ -200,6 +200,7 @@
     <button data-tab="acceleration">Acceleration</button>
     <button data-tab="speedhive">Speedhive</button>
     <button data-tab="gglc">GGLC</button>
+    <button data-tab="android">Android</button>
     <button data-tab="submissions" class="admin-only">Submissions<span id="sub-count" class="count" title="Waiting for review"></span></button>
     <button data-tab="moderation" class="admin-only">Moderation<span id="mod-count" class="count" title="Open reports"></span></button>
   </nav>
@@ -460,6 +461,17 @@
   </div>
 </section>
 
+<section id="tab-android" class="tab">
+  <div class="panel">
+    <div class="row">
+      <h2 style="margin:0">Android release</h2>
+      <button class="btn primary" id="android-load-btn">Reload</button>
+      <button class="btn" onclick="location.href = '/android'">Download APK</button>
+    </div>
+    <pre id="android-json">(not loaded)</pre>
+  </div>
+</section>
+
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -469,7 +481,7 @@ const setStatus = (msg, isError) => {
   statusEl.classList.toggle("error", !!isError);
 };
 
-const TABS = ["leaderboard", "acceleration", "speedhive", "gglc", "submissions", "moderation"];
+const TABS = ["leaderboard", "acceleration", "speedhive", "gglc", "android", "submissions", "moderation"];
 const ADMIN_TABS = ["submissions", "moderation"];
 function showTab(name) {
   history.replaceState(null, "", "#" + name);
@@ -477,6 +489,7 @@ function showTab(name) {
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + name));
   document.querySelector("nav button.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   if (name === "acceleration") loadAcceleration();
+  if (name === "android") loadAndroidRelease();
   if (name === "submissions") loadSubmissions();
   if (name === "moderation") { loadReports(); loadBans(); loadUsers(); }
   if (name === "speedhive" && shLoadedOrg !== $("org-input").value) loadShEvents();
@@ -1423,6 +1436,14 @@ async function loadGglcEvents() {
   fillList($("gglc-events"), events, e => esc(e.date), e => { $("gglc-date").value = e.date; loadGglcEvent(e.date); });
 }
 $("gglc-list-btn").onclick = loadGglcEvents;
+
+async function loadAndroidRelease() {
+  const res = await fetch("/api/android/release");
+  $("android-json").textContent = res.ok
+    ? JSON.stringify(await res.json(), null, 2)
+    : `${res.status}: no release published`;
+}
+$("android-load-btn").onclick = loadAndroidRelease;
 $("gglc-year").onchange = loadGglcEvents;
 
 $("gglc-load-btn").onclick = () => loadGglcEvent($("gglc-date").value);

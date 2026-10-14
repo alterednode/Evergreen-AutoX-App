@@ -2319,6 +2319,42 @@ def stats():
     return {"devices": devices, "installs": installs}
 
 
+def _android_release() -> tuple[dict, Path]:
+    directory = db.android_dir()
+    try:
+        release = json.loads((directory / "release.json").read_text())
+        apk = directory / Path(release["file_name"]).name
+    except (OSError, ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=404, detail="No Android release") from None
+    if not apk.is_file():
+        raise HTTPException(status_code=404, detail="No Android release")
+    return release, apk
+
+
+@app.get("/api/android/release")
+def android_release():
+    release, _ = _android_release()
+    return {
+        "version_name": release.get("version_name"),
+        "version_code": release.get("version_code"),
+        "sha256": release.get("sha256"),
+        "size": release.get("size"),
+        "file_name": release.get("file_name"),
+        "download_url": "/android",
+    }
+
+
+@app.get("/android", include_in_schema=False)
+def android_apk():
+    release, apk = _android_release()
+    return FileResponse(
+        apk,
+        media_type="application/vnd.android.package-archive",
+        filename=f"AutoX-Live-{release.get('version_name', 'latest')}.apk",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.get("/", include_in_schema=False)
 @app.get("/app", include_in_schema=False)
 def landing():
