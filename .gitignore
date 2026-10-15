@@ -259,3 +259,6 @@ server/android/
 *.jks
 *.keystore
 release.properties
+
+# MacOS
+.DS_Store
