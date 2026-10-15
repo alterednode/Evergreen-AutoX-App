@@ -9,6 +9,7 @@ struct ContentView: View {
             .task { await model.start() }
             .onChange(of: model.watchContext, initial: true) { _, context in
                 WatchSync.shared.send(context)
+                CarPlayFeed.shared.update(context)
             }
     }
 }

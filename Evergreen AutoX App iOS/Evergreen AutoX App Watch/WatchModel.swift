@@ -41,28 +41,20 @@ final class WatchModel {
 
     var isLive: Bool { context?.isLive ?? false }
 
-    var me: Driver? {
-        guard let number = context?.meNumber else { return nil }
-        return drivers.first { $0.startNumber == number }
-    }
+    var me: Driver? { context?.me(in: drivers) }
 
-    // ME and the pinned cars, in finishing order.
-    var friends: [Driver] {
-        guard let context else { return [] }
-        return drivers.filter { $0.startNumber == context.meNumber || context.pins.contains($0.startNumber) }
-    }
+    var friends: [Driver] { context?.friends(in: drivers) ?? [] }
 
     func isMe(_ driver: Driver) -> Bool {
-        driver.startNumber == context?.meNumber
+        context?.isMe(driver) ?? false
     }
 
     func displayName(_ driver: Driver) -> String {
-        context?.nicknames[driver.startNumber] ?? driver.name
+        context?.displayName(driver) ?? driver.name
     }
 
     func gapToMe(_ driver: Driver) -> Double? {
-        guard let mine = me?.best, let theirs = driver.best, !isMe(driver) else { return nil }
-        return theirs - mine
+        context?.gapToMe(driver, in: drivers)
     }
 
     // A failure leaves the last results up, as on the phone.

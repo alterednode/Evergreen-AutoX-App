@@ -1,0 +1,221 @@
+import CarPlay
+import Foundation
+
+// Follows the session the phone app has open, the way the Watch app does, and
+// fetches its results itself: in the car the phone is locked, so AppModel's
+// live refresh is not running. The context is saved because CarPlay can
+// launch the app without its window scene, and with it AppModel.
+final class CarPlayFeed {
+    static let shared = CarPlayFeed()
+
+    private(set) var context: WatchContext?
+    private(set) var drivers: [Driver] = []
+    private(set) var loadedSessionID: Int?
+    private(set) var errorMessage: String?
+    var onChange: (() -> Void)?
+
+    private let defaults = UserDefaults.standard
+    private static let contextKey = "carPlayContext"
+
+    private init() {
+        if let data = defaults.data(forKey: Self.contextKey) {
+            context = try? JSONDecoder().decode(WatchContext.self, from: data)
+        }
+    }
+
+    func update(_ new: WatchContext) {
+        guard new != context else { return }
+        if new.sessionID != context?.sessionID || new.baseURL != context?.baseURL {
+            drivers = []
+            loadedSessionID = nil
+            errorMessage = nil
+        }
+        context = new
+        defaults.set(try? JSONEncoder().encode(new), forKey: Self.contextKey)
+        onChange?()
+    }
+
+    var me: Driver? { context?.me(in: drivers) }
+
+    // A failure leaves the last results up, as on the phone.
+    func refresh() async {
+        guard let context, let sessionID = context.sessionID,
+              let baseURL = URL(string: context.baseURL.hasSuffix("/") ? context.baseURL : context.baseURL + "/")
+        else { return }
+        do {
+            let loaded = try await APIClient(baseURL: baseURL, deviceToken: nil).drivers(sessionID: sessionID)
+            guard self.context?.sessionID == sessionID else { return }
+            drivers = loaded
+            loadedSessionID = sessionID
+            errorMessage = nil
+        } catch {
+            guard self.context?.sessionID == sessionID else { return }
+            errorMessage = error.localizedDescription
+        }
+        onChange?()
+    }
+}
+
+// The Watch app's two pages as CarPlay tabs: ME's last run, and ME with the
+// pinned friends. Driving-task apps may only use list, information, grid and
+// tab bar templates, and must stay glanceable, hence no drill-down.
+final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
+    private var interfaceController: CPInterfaceController?
+    private let feed = CarPlayFeed.shared
+    private let lastRun = CPInformationTemplate(title: "Last Run", layout: .twoColumn, items: [], actions: [])
+    private let friends = CPListTemplate(title: "Friends", sections: [])
+    private var pollTask: Task<Void, Never>?
+    private var polledSession: (sessionID: Int?, baseURL: String?, live: Bool)?
+
+    func templateApplicationScene(
+        _ templateApplicationScene: CPTemplateApplicationScene,
+        didConnect interfaceController: CPInterfaceController
+    ) {
+        self.interfaceController = interfaceController
+        lastRun.tabTitle = "Last Run"
+        lastRun.tabImage = UIImage(systemName: "stopwatch")
+        friends.tabTitle = "Friends"
+        friends.tabImage = UIImage(systemName: "person.2")
+        let tabs = CPTabBarTemplate(templates: [lastRun, friends])
+        interfaceController.setRootTemplate(tabs, animated: false, completion: nil)
+        feed.onChange = { [weak self] in self?.render() }
+        render()
+    }
+
+    func templateApplicationScene(
+        _ templateApplicationScene: CPTemplateApplicationScene,
+        didDisconnect interfaceController: CPInterfaceController,
+        from window: CPWindow
+    ) {
+        feed.onChange = nil
+        pollTask?.cancel()
+        pollTask = nil
+        polledSession = nil
+        self.interfaceController = nil
+    }
+
+    private func render() {
+        restartPollingIfNeeded()
+        renderLastRun()
+        renderFriends()
+    }
+
+    // An old event is fetched once.
+    private func restartPollingIfNeeded() {
+        let context = feed.context
+        let key = (sessionID: context?.sessionID, baseURL: context?.baseURL, live: context?.isLive ?? false)
+        if let polledSession, polledSession == key { return }
+        polledSession = key
+        pollTask?.cancel()
+        guard key.sessionID != nil else { return }
+        pollTask = Task { [feed] in
+            while !Task.isCancelled {
+                await feed.refresh()
+                guard key.live else { return }
+                try? await Task.sleep(for: .seconds(10))
+            }
+        }
+    }
+
+    private var loadMessage: String? {
+        guard feed.drivers.isEmpty else { return nil }
+        if feed.context?.sessionID == nil { return "Open AutoX Live on your iPhone and pick an event." }
+        if let error = feed.errorMessage { return error }
+        if feed.loadedSessionID == nil { return "Loading…" }
+        return "No results in this session yet."
+    }
+
+    private func renderLastRun() {
+        if let message = loadMessage {
+            lastRun.items = [CPInformationItem(title: nil, detail: message)]
+            return
+        }
+        guard let me = feed.me else {
+            lastRun.items = [CPInformationItem(title: nil, detail: "Tap FIND ME on your iPhone to follow your car.")]
+            return
+        }
+        let last = me.runs.last
+        var items = [
+            CPInformationItem(title: "LAST RUN", detail: last?.timeString ?? "—"),
+            CPInformationItem(title: "PENALTY", detail: penalty(last)),
+            CPInformationItem(title: "BEST", detail: me.bestString),
+            CPInformationItem(title: "POSITION", detail: position(me)),
+        ]
+        if !me.timedRuns.isEmpty {
+            items.append(CPInformationItem(title: "RUNS", detail: "\(me.timedRuns.count)"))
+        }
+        lastRun.items = items
+    }
+
+    private func renderFriends() {
+        if let message = loadMessage {
+            friends.emptyViewTitleVariants = [message]
+            friends.updateSections([])
+            return
+        }
+        guard let context = feed.context else { return }
+        let rows = context.friends(in: feed.drivers).map { driver in
+            let isMe = context.isMe(driver)
+            var detail = "P\(driver.position) · Best \(driver.bestString)"
+            let badge: UIImage
+            if isMe {
+                if let carClass = driver.carClass, let inClass = driver.positionInClass {
+                    detail = "P\(driver.position) · P\(inClass) \(carClass) · Best \(driver.bestString)"
+                }
+                badge = self.badge("YOU", fill: Self.meFill)
+            } else if let gap = context.gapToMe(driver, in: feed.drivers) {
+                badge = self.badge(LapTime.gap(gap), fill: gap < 0 ? Self.aheadFill : Self.behindFill)
+            } else {
+                badge = self.badge("—", fill: Self.neutralFill)
+            }
+            return CPListItem(text: isMe ? "You" : context.displayName(driver), detailText: detail, image: badge)
+        }
+        friends.emptyViewTitleVariants = ["Pin friends on your iPhone to see them here."]
+        friends.updateSections(rows.isEmpty ? [] : [CPListSection(items: rows)])
+    }
+
+    private static let meFill = UIColor(red: 0xEC / 255, green: 0x30 / 255, blue: 0x13 / 255, alpha: 1)
+    private static let aheadFill = UIColor(red: 0xD9 / 255, green: 0x82 / 255, blue: 0x00 / 255, alpha: 1)
+    private static let behindFill = UIColor(red: 0x2E / 255, green: 0x9E / 255, blue: 0x4F / 255, alpha: 1)
+    private static let neutralFill = UIColor(white: 0.36, alpha: 1)
+
+    // CarPlay can run light or dark; white on a solid fill reads in both.
+    private func badge(_ label: String, fill: UIColor) -> UIImage {
+        let size = CPListItem.maximumImageSize
+        let format = UIGraphicsImageRendererFormat(for: interfaceController?.carTraitCollection ?? UITraitCollection())
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            fill.setFill()
+            UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: size.height * 0.2).fill()
+            let text = label as NSString
+            var fontSize = size.height * 0.42
+            var attributes: [NSAttributedString.Key: Any] = [:]
+            var textSize = CGSize.zero
+            repeat {
+                attributes = [
+                    .font: UIFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .heavy),
+                    .foregroundColor: UIColor.white,
+                ]
+                textSize = text.size(withAttributes: attributes)
+                fontSize -= 1
+            } while textSize.width > size.width * 0.88 && fontSize > 8
+            text.draw(
+                at: CGPoint(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2),
+                withAttributes: attributes
+            )
+        }
+    }
+
+    private func penalty(_ run: Run?) -> String {
+        guard let run else { return "No runs yet" }
+        if run.dnf { return "Off course" }
+        if run.cones > 0 { return run.cones == 1 ? "+1 cone" : "+\(run.cones) cones" }
+        return "Clean run"
+    }
+
+    private func position(_ driver: Driver) -> String {
+        if let carClass = driver.carClass, let inClass = driver.positionInClass {
+            return "P\(inClass) \(carClass) · P\(driver.position) overall"
+        }
+        return "P\(driver.position)"
+    }
+}

@@ -51,3 +51,30 @@ nonisolated struct WatchContext: Codable, Equatable {
         return start.prefix(10) >= formatter.string(from: yesterday)
     }
 }
+
+// Who the context follows within a session's results, for the Watch and
+// CarPlay alike.
+nonisolated extension WatchContext {
+    func me(in drivers: [Driver]) -> Driver? {
+        guard let meNumber else { return nil }
+        return drivers.first { $0.startNumber == meNumber }
+    }
+
+    // ME and the pinned cars, in finishing order.
+    func friends(in drivers: [Driver]) -> [Driver] {
+        drivers.filter { $0.startNumber == meNumber || pins.contains($0.startNumber) }
+    }
+
+    func isMe(_ driver: Driver) -> Bool {
+        driver.startNumber == meNumber
+    }
+
+    func displayName(_ driver: Driver) -> String {
+        nicknames[driver.startNumber] ?? driver.name
+    }
+
+    func gapToMe(_ driver: Driver, in drivers: [Driver]) -> Double? {
+        guard let mine = me(in: drivers)?.best, let theirs = driver.best, !isMe(driver) else { return nil }
+        return theirs - mine
+    }
+}
