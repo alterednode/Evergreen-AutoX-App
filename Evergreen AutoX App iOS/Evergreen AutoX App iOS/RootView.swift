@@ -11,6 +11,9 @@ struct RootView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let staleSince = model.staleSince {
+                staleBanner(since: staleSince)
+            }
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             tabBar
@@ -146,6 +149,36 @@ struct RootView: View {
         .overlay(alignment: .bottom) {
             Color.egDivider.frame(height: 2)
         }
+    }
+
+    private func staleBanner(since date: Date) -> some View {
+        Button {
+            Task { await model.retryStale() }
+        } label: {
+            HStack(spacing: 8) {
+                EGTag(text: "OFFLINE", background: .egDarkRed, size: 10)
+                Text("Couldn't refresh. Showing data from \(AppModel.staleLabel(date)).")
+                    .egFont(11.5, weight: .semibold)
+                    .foregroundStyle(Color.egInk)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if model.isRetrying {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .egFont(12, weight: .heavy)
+                        .foregroundStyle(Color.egDarkRed)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.egPinnedBg)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isRetrying)
+        .accessibilityHint("Tries to refresh again")
     }
 
     private var sessionMenu: some View {

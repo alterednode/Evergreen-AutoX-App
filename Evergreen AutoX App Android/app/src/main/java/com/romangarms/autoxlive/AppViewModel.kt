@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.romangarms.autoxlive.data.AccelEntry
 import com.romangarms.autoxlive.data.ApiClient
+import com.romangarms.autoxlive.data.ApiException
 import com.romangarms.autoxlive.data.Driver
 import com.romangarms.autoxlive.data.EventSource
 import com.romangarms.autoxlive.data.GGLCEventStub
@@ -16,6 +17,7 @@ import com.romangarms.autoxlive.data.SHEvent
 import com.romangarms.autoxlive.data.SHLocation
 import com.romangarms.autoxlive.data.SHOrg
 import com.romangarms.autoxlive.data.SHSession
+import com.romangarms.autoxlive.data.Saved
 import com.romangarms.autoxlive.data.SettingsStore
 import com.romangarms.autoxlive.data.StoredSettings
 import kotlinx.coroutines.async
@@ -45,6 +47,10 @@ interface AutoXApi {
     suspend fun block(target: LBReportTarget): LBBlock
     suspend fun blocks(): List<LBBlock>
     suspend fun unblock(id: Int)
+
+    // Runs `load` against the answers the server gave last time instead of
+    // the server; null when they don't cover it.
+    suspend fun <T> fromCache(load: suspend AutoXApi.() -> T): Saved<T>? = null
 }
 
 class RemoteApi(private val client: ApiClient) : AutoXApi {
@@ -62,6 +68,7 @@ class RemoteApi(private val client: ApiClient) : AutoXApi {
     override suspend fun block(target: LBReportTarget) = client.block(target)
     override suspend fun blocks() = client.blocks()
     override suspend fun unblock(id: Int) { client.unblock(id) }
+    override suspend fun <T> fromCache(load: suspend AutoXApi.() -> T) = client.fromCache { RemoteApi(this).load() }
 }
 
 sealed interface NavCommand {
@@ -167,6 +174,35 @@ class AppViewModel(
         _state.update { it.copy(compareSelection = emptyList()) }
     }
 
+    // Asks the server, or when it can't be reached, takes the answer it gave
+    // last time.
+    private suspend fun <T> fetch(load: suspend AutoXApi.() -> T): Pair<T, DataAge> =
+        try {
+            api.load() to DataAge(System.currentTimeMillis())
+        } catch (e: ApiException) {
+            if (!e.unreachable) throw e
+            val saved = api.fromCache(load) ?: throw e
+            saved.value to DataAge(saved.fetchedAt, refreshFailed = true)
+        }
+
+    fun retryStale() {
+        if (current.isRetrying) return
+        _state.update { it.copy(isRetrying = true) }
+        viewModelScope.launch {
+            try {
+                when (current.route) {
+                    RouteKind.LEADERBOARD -> current.openCourseId?.let { fetchLeaderboard(it) }
+                    RouteKind.ACCELERATION -> fetchAcceleration()
+                    RouteKind.BOARDS -> refreshLeaderboardEvents()
+                    RouteKind.EVENTS -> loadEvents()
+                    else -> if (current.eventsAge?.refreshFailed == true) loadEvents() else loadSessionData()
+                }
+            } finally {
+                _state.update { it.copy(isRetrying = false) }
+            }
+        }
+    }
+
     fun refreshEvents() {
         viewModelScope.launch { loadEvents() }
     }
@@ -175,14 +211,22 @@ class AppViewModel(
         _state.update { it.copy(isLoading = true, errorMessage = null) }
         try {
             val (org, speedhive, gglc, leaderboard) = coroutineScope {
-                val org = async { runCatching { api.org(AppState.DEFAULT_ORG_ID) }.getOrNull() }
+                val org = async { runCatching { fetch { org(AppState.DEFAULT_ORG_ID) }.first }.getOrNull() }
                 val gglc = async { loadGGLCEvents() }
                 val leaderboard = async { loadLeaderboardEvents() }
-                val speedhive = api.events(AppState.DEFAULT_ORG_ID)
+                val speedhive = fetch { events(AppState.DEFAULT_ORG_ID) }
                 Quad(org.await(), speedhive, gglc.await(), leaderboard.await())
             }
-            val events = (speedhive + gglc).sortedByDescending { it.startDate ?: "" } + leaderboard
-            _state.update { it.copy(events = events, orgName = org?.name) }
+            val leaderboardEvents = leaderboard?.first ?: current.events.filter { it.source == EventSource.LEADERBOARD }
+            val events = (speedhive.first + gglc.first).sortedByDescending { it.startDate ?: "" } + leaderboardEvents
+            _state.update {
+                it.copy(
+                    events = events,
+                    orgName = org?.name,
+                    eventsAge = AppState.combined(listOf(speedhive.second, gglc.second)),
+                    boardsAge = leaderboard?.second ?: it.boardsAge,
+                )
+            }
             // Only an event the user opened is remembered; until then every
             // launch follows the newest one. A reload keeps what's on screen.
             val s = current
@@ -194,18 +238,21 @@ class AppViewModel(
                 _state.update { it.copy(isLoading = false) }
             }
         } catch (e: Exception) {
-            _state.update { it.copy(errorMessage = e.message, isLoading = false) }
+            _state.update {
+                it.copy(errorMessage = e.message, isLoading = false, eventsAge = it.eventsAge?.copy(refreshFailed = true))
+            }
         }
     }
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
     // GGLC failures only cost the extra events; Speedhive stays usable.
-    private suspend fun loadGGLCEvents(): List<SHEvent> = coroutineScope {
+    private suspend fun loadGGLCEvents(): Pair<List<SHEvent>, DataAge?> = coroutineScope {
         val year = today().year
-        val thisYear = async { runCatching { api.gglcEvents(year) }.getOrDefault(emptyList()) }
-        val lastYear = async { runCatching { api.gglcEvents(year - 1) }.getOrDefault(emptyList()) }
-        (thisYear.await() + lastYear.await()).mapNotNull { stub ->
+        val thisYear = async { runCatching { fetch { gglcEvents(year) } }.getOrNull() }
+        val lastYear = async { runCatching { fetch { gglcEvents(year - 1) } }.getOrNull() }
+        val years = listOfNotNull(thisYear.await(), lastYear.await())
+        val events = years.flatMap { it.first }.mapNotNull { stub ->
             AppState.gglcEventId(stub.date)?.let { id ->
                 SHEvent(
                     id = id,
@@ -216,14 +263,20 @@ class AppViewModel(
                 )
             }
         }
+        events to AppState.combined(years.map { it.second })
     }
 
-    // Like GGLC, leaderboard failures only cost the extra rows.
-    private suspend fun loadLeaderboardEvents(): List<SHEvent> {
-        val courses = runCatching { api.leaderboardCourses() }.getOrDefault(emptyList())
-        _state.update { it.copy(leaderboardCourses = courses) }
+    // Like GGLC, leaderboard failures only cost the extra rows. Null means
+    // nothing came back, so the boards already shown stay.
+    private suspend fun loadLeaderboardEvents(): Pair<List<SHEvent>, DataAge>? {
+        val courses = runCatching { fetch { leaderboardCourses() } }.getOrNull()
+        if (courses == null) {
+            _state.update { it.copy(boardsAge = it.boardsAge?.copy(refreshFailed = true)) }
+            return null
+        }
+        _state.update { it.copy(leaderboardCourses = courses.first) }
         val hidden = current.settings.hiddenCourseIds
-        return courses.filter { it.id !in hidden }.map(::leaderboardEvent)
+        return courses.first.filter { it.id !in hidden }.map(::leaderboardEvent) to courses.second
     }
 
     private fun leaderboardEvent(course: LBCourse) = SHEvent(
@@ -237,8 +290,10 @@ class AppViewModel(
     )
 
     suspend fun refreshLeaderboardEvents() {
-        val leaderboard = loadLeaderboardEvents()
-        _state.update { s -> s.copy(events = s.events.filter { it.source != EventSource.LEADERBOARD } + leaderboard) }
+        val (leaderboard, age) = loadLeaderboardEvents() ?: return
+        _state.update { s ->
+            s.copy(events = s.events.filter { it.source != EventSource.LEADERBOARD } + leaderboard, boardsAge = age)
+        }
     }
 
     fun openEvent(eventId: Int) {
@@ -252,7 +307,14 @@ class AppViewModel(
         // Stale rows from the old session would make a failed load look like
         // the switch never happened, especially between same-named events.
         _state.update {
-            it.copy(drivers = emptyList(), compareSelection = emptyList(), sessions = emptyList(), selectedSessionId = null, isLoading = true)
+            it.copy(
+                drivers = emptyList(),
+                driversAge = null,
+                compareSelection = emptyList(),
+                sessions = emptyList(),
+                selectedSessionId = null,
+                isLoading = true,
+            )
         }
         viewModelScope.launch { selectEvent(eventId) }
     }
@@ -260,7 +322,7 @@ class AppViewModel(
     fun pickSession(sessionId: Int) {
         if (sessionId == current.selectedSessionId) return
         navChannel.trySend(NavCommand.ShowLive)
-        _state.update { it.copy(drivers = emptyList(), compareSelection = emptyList(), isLoading = true) }
+        _state.update { it.copy(drivers = emptyList(), driversAge = null, compareSelection = emptyList(), isLoading = true) }
         viewModelScope.launch { selectSession(sessionId) }
     }
 
@@ -271,7 +333,7 @@ class AppViewModel(
         _state.update { it.copy(selectedEventId = eventId, isLoading = true, errorMessage = null) }
         if (remember) editSettings { it.copy(selectedEventId = eventId) }
         try {
-            val fetched = if (eventId < 0) gglcSessions(eventId) else api.sessions(eventId)
+            val fetched = if (eventId < 0) gglcSessions(eventId) else fetch { sessions(eventId) }.first
             if (current.selectedEventId != eventId) return
             _state.update { it.copy(sessions = fetched) }
             val saved = current.settings.sessionChoice[eventId.toString()]
@@ -306,18 +368,18 @@ class AppViewModel(
         _state.update { it.copy(isLoading = true, errorMessage = null) }
         lastSessionLoad = System.currentTimeMillis()
         try {
-            val loaded = api.drivers(sessionId)
+            val (loaded, age) = fetch { drivers(sessionId) }
             if (current.selectedSessionId != sessionId) return
-            _state.update { it.copy(drivers = loaded) }
+            _state.update { it.copy(drivers = loaded, driversAge = age) }
         } catch (e: Exception) {
             if (current.selectedSessionId != sessionId) return
-            _state.update { it.copy(errorMessage = e.message) }
+            _state.update { it.copy(errorMessage = e.message, driversAge = it.driversAge?.copy(refreshFailed = true)) }
         }
         _state.update { it.copy(isLoading = false) }
     }
 
     // The automatic reload: no spinner, and a failure leaves the last results
-    // up rather than replacing a live board with an error every few seconds.
+    // up, marked as old, rather than replacing a live board with an error.
     // Driver and compare pages are addressed by car number, so they follow
     // their drivers to whatever positions the new times give them.
     suspend fun refreshSessionData() {
@@ -332,35 +394,46 @@ class AppViewModel(
                 _state.update { it.copy(sessions = fetched) }
             }
         }
-        val loaded = runCatching { api.drivers(sessionId) }.getOrNull() ?: return
+        val loaded = runCatching { api.drivers(sessionId) }.getOrNull()
         if (current.selectedSessionId != sessionId) return
-        _state.update { it.copy(drivers = loaded, errorMessage = null) }
+        if (loaded == null) {
+            _state.update { it.copy(driversAge = it.driversAge?.copy(refreshFailed = true)) }
+            return
+        }
+        _state.update {
+            it.copy(drivers = loaded, driversAge = DataAge(System.currentTimeMillis()), errorMessage = null)
+        }
     }
 
     fun openLeaderboard(courseId: Int) {
-        _state.update { it.copy(openCourseId = courseId, leaderboardError = null, leaderboardDetail = null) }
-        viewModelScope.launch {
-            try {
-                val detail = api.leaderboardCourse(courseId)
-                if (current.openCourseId != courseId) return@launch
-                _state.update { it.copy(leaderboardDetail = detail) }
-            } catch (e: Exception) {
-                if (current.openCourseId != courseId) return@launch
-                _state.update { it.copy(leaderboardError = e.message) }
-            }
+        _state.update { it.copy(openCourseId = courseId, leaderboardDetail = null, leaderboardAge = null) }
+        viewModelScope.launch { fetchLeaderboard(courseId) }
+    }
+
+    private suspend fun fetchLeaderboard(courseId: Int) {
+        _state.update { it.copy(leaderboardError = null) }
+        try {
+            val (detail, age) = fetch { leaderboardCourse(courseId) }
+            if (current.openCourseId != courseId) return
+            _state.update { it.copy(leaderboardDetail = detail, leaderboardAge = age) }
+        } catch (e: Exception) {
+            if (current.openCourseId != courseId) return
+            _state.update { it.copy(leaderboardError = e.message, leaderboardAge = it.leaderboardAge?.copy(refreshFailed = true)) }
         }
     }
 
     // The last list stays up while it reloads; the board changes rarely.
     fun loadAcceleration() {
+        viewModelScope.launch { fetchAcceleration() }
+    }
+
+    private suspend fun fetchAcceleration() {
         _state.update { it.copy(accelerationError = null) }
-        viewModelScope.launch {
-            try {
-                val entries = api.acceleration()
-                _state.update { it.copy(accelerationEntries = entries) }
-            } catch (e: Exception) {
-                _state.update { it.copy(accelerationError = e.message) }
-            }
+        try {
+            val (entries, age) = fetch { acceleration() }
+            _state.update { it.copy(accelerationEntries = entries, accelerationAge = age) }
+        } catch (e: Exception) {
+            _state.update { it.copy(accelerationError = e.message, accelerationAge = it.accelerationAge?.copy(refreshFailed = true)) }
         }
     }
 

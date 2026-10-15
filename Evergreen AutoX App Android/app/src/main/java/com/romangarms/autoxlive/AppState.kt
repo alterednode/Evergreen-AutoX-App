@@ -10,13 +10,19 @@ import com.romangarms.autoxlive.data.LBEntry
 import com.romangarms.autoxlive.data.SHEvent
 import com.romangarms.autoxlive.data.SHSession
 import com.romangarms.autoxlive.data.StoredSettings
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
 
-enum class RouteKind { LIVE, FRIENDS, EVENTS, BOARDS, SETUP, DRIVER, COMPARE, OTHER }
+enum class RouteKind { LIVE, FRIENDS, EVENTS, BOARDS, SETUP, DRIVER, COMPARE, LEADERBOARD, ACCELERATION, OTHER }
+
+// When what a page shows was fetched, and whether the latest try to replace
+// it failed, which is when the page says its data is old.
+data class DataAge(val fetchedAt: Long, val refreshFailed: Boolean = false)
 
 data class AppState(
     val settings: StoredSettings = StoredSettings(),
@@ -36,6 +42,12 @@ data class AppState(
     val selectedSessionId: Int? = null,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
+    val eventsAge: DataAge? = null,
+    val boardsAge: DataAge? = null,
+    val driversAge: DataAge? = null,
+    val leaderboardAge: DataAge? = null,
+    val accelerationAge: DataAge? = null,
+    val isRetrying: Boolean = false,
     val compareSelection: List<String> = emptyList(),
     val route: RouteKind = RouteKind.LIVE,
 ) {
@@ -116,6 +128,19 @@ data class AppState(
         return if (parts.isEmpty()) "Session ${session.id}" else parts.joinToString(" · ")
     }
 
+    val staleSince: Long?
+        get() {
+            val age = when (route) {
+                RouteKind.LIVE, RouteKind.FRIENDS, RouteKind.DRIVER, RouteKind.COMPARE -> driversAge
+                RouteKind.EVENTS -> eventsAge
+                RouteKind.BOARDS -> boardsAge
+                RouteKind.LEADERBOARD -> leaderboardAge
+                RouteKind.ACCELERATION -> accelerationAge
+                RouteKind.SETUP, RouteKind.OTHER -> null
+            }
+            return age?.takeIf { it.refreshFailed }?.fetchedAt
+        }
+
     // Only an event from today or yesterday can still be producing times, and
     // only these pages show them.
     fun wantsLiveRefresh(today: LocalDate = LocalDate.now()): Boolean {
@@ -163,6 +188,22 @@ data class AppState(
             return runCatching {
                 LocalDate.parse(date.take(10)).format(DateTimeFormatter.ofPattern("EEE, MMM d, yyyy", Locale.getDefault()))
             }.getOrNull()
+        }
+
+        fun staleLabel(millis: Long, zone: ZoneId = ZoneId.systemDefault(), today: LocalDate = LocalDate.now(zone)): String {
+            val time = Instant.ofEpochMilli(millis).atZone(zone)
+            return if (time.toLocalDate() == today) {
+                time.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
+            } else {
+                time.format(DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.getDefault()))
+            }
+        }
+
+        // A list built from several answers is as old as its oldest one.
+        fun combined(ages: List<DataAge?>): DataAge? {
+            val known = ages.filterNotNull()
+            val oldest = known.minOfOrNull { it.fetchedAt } ?: return null
+            return DataAge(oldest, known.any { it.refreshFailed })
         }
 
         // Speedhive lists sessions grouped by class, not by time, so "first"

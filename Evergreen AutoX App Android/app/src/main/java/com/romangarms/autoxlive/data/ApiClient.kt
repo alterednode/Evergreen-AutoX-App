@@ -16,43 +16,64 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Headers
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
+import kotlinx.coroutines.CancellationException
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class ApiException(message: String, val status: Int? = null) : Exception(message)
+class ApiException(message: String, val status: Int? = null) : Exception(message) {
+    // Worth falling back to saved answers: the server didn't answer, or the
+    // proxy in front of it did because it is down.
+    val unreachable: Boolean get() = status == null || status >= 500
+}
+
+private const val KEEP = "X-AutoX-Keep"
 
 private interface AutoXService {
     @GET("api/orgs/{id}")
+    @Headers("$KEEP: 1")
     suspend fun org(@Path("id") orgId: Int): SHOrg
 
     @GET("api/orgs/{id}/events")
+    @Headers("$KEEP: 1")
     suspend fun events(@Path("id") orgId: Int, @Query("limit") limit: Int): List<SHEvent>
 
     @GET("api/events/{id}/sessions")
+    @Headers("$KEEP: 1")
     suspend fun sessions(@Path("id") eventId: Int): List<SHSession>
 
     @GET("api/sessions/{id}/results")
+    @Headers("$KEEP: 1")
     suspend fun results(@Path("id") sessionId: Int): List<SHResultRow>
 
     @GET("api/sessions/{id}/laps")
+    @Headers("$KEEP: 1")
     suspend fun laps(@Path("id") sessionId: Int): List<SHLapsRow>
 
     @GET("api/gglc/events")
+    @Headers("$KEEP: 1")
     suspend fun gglcEvents(@Query("year") year: Int): List<GGLCEventStub>
 
     @GET("api/gglc/events/{date}")
+    @Headers("$KEEP: 1")
     suspend fun gglcEvent(@Path("date") date: String): GGLCEvent
 
     @GET("api/leaderboard/courses")
+    @Headers("$KEEP: 1")
     suspend fun leaderboardCourses(): List<LBCourse>
 
     @GET("api/leaderboard/courses/{id}")
+    @Headers("$KEEP: 1")
     suspend fun leaderboardCourse(@Path("id") id: Int): LBCourseDetail
 
     @GET("api/acceleration")
+    @Headers("$KEEP: 1")
     suspend fun acceleration(): List<AccelEntry>
 
     @POST("api/leaderboard/join")
@@ -77,7 +98,12 @@ private interface AutoXService {
     suspend fun androidRelease(): AndroidRelease
 }
 
-class ApiClient(baseUrl: String, private val deviceToken: String) {
+class ApiClient(
+    baseUrl: String,
+    private val deviceToken: String,
+    private val cache: ResponseCache? = null,
+    private val cacheReader: CacheReader? = null,
+) {
     val baseUrl: String = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
 
     // Short timeouts so an unreachable server fails fast at launch.
@@ -92,7 +118,27 @@ class ApiClient(baseUrl: String, private val deviceToken: String) {
     private val anonymous = retrofit(http)
     private val authed = http.newBuilder()
         .addInterceptor { chain ->
-            chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer $deviceToken").build())
+            val keep = chain.request().header(KEEP) != null
+            val request = chain.request().newBuilder()
+                .removeHeader(KEEP)
+                .header("Authorization", "Bearer $deviceToken")
+                .build()
+            val url = request.url.toString()
+            if (cacheReader != null) {
+                val saved = (if (keep) cache?.load(url) else null) ?: throw IOException("Nothing saved for ${request.url.encodedPath}")
+                cacheReader.note(saved.fetchedAt)
+                Response.Builder()
+                    .request(request)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(saved.value.toResponseBody("application/json".toMediaType()))
+                    .build()
+            } else {
+                val response = chain.proceed(request)
+                if (keep && response.isSuccessful) cache?.store(url, response.peekBody(Long.MAX_VALUE).bytes())
+                response
+            }
         }
         .build()
     private val service = retrofit(authed)
@@ -136,6 +182,21 @@ class ApiClient(baseUrl: String, private val deviceToken: String) {
             val laps = async { call { service.laps(sessionId) } }
             SessionResults.speedhiveDrivers(results.await(), laps.await())
         }
+    }
+
+    // Runs `load` against the answers `cache` kept instead of the server.
+    // `fetchedAt` is when the oldest answer it used was fetched.
+    suspend fun <T> fromCache(load: suspend ApiClient.() -> T): Saved<T>? {
+        cache ?: return null
+        val reader = CacheReader()
+        val value = try {
+            ApiClient(baseUrl, deviceToken, cache, reader).load()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return null
+        }
+        return reader.oldest?.let { Saved(value, it) }
     }
 
     fun resolve(path: String): String =

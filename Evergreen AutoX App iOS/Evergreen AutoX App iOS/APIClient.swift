@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct APIError: LocalizedError {
@@ -9,6 +10,14 @@ struct APIError: LocalizedError {
 struct APIClient {
     let baseURL: URL
     var deviceToken: String?
+    var cache: ResponseCache?
+    private var cacheReader: CacheReader?
+
+    init(baseURL: URL, deviceToken: String? = nil, cache: ResponseCache? = nil) {
+        self.baseURL = baseURL
+        self.deviceToken = deviceToken
+        self.cache = cache
+    }
 
     // Short timeouts so an unreachable server fails fast at launch instead of
     // hanging behind URLSession's default 60s.
@@ -27,43 +36,43 @@ struct APIClient {
     }
 
     func org(orgID: Int) async throws -> SHOrg {
-        try await get("api/orgs/\(orgID)")
+        try await get("api/orgs/\(orgID)", keep: true)
     }
 
     func events(orgID: Int, limit: Int = 200) async throws -> [SHEvent] {
-        try await get("api/orgs/\(orgID)/events?limit=\(limit)")
+        try await get("api/orgs/\(orgID)/events?limit=\(limit)", keep: true)
     }
 
     func sessions(eventID: Int) async throws -> [SHSession] {
-        try await get("api/events/\(eventID)/sessions")
+        try await get("api/events/\(eventID)/sessions", keep: true)
     }
 
     func results(sessionID: Int) async throws -> [SHResultRow] {
-        try await get("api/sessions/\(sessionID)/results")
+        try await get("api/sessions/\(sessionID)/results", keep: true)
     }
 
     func laps(sessionID: Int) async throws -> [SHLapsRow] {
-        try await get("api/sessions/\(sessionID)/laps")
+        try await get("api/sessions/\(sessionID)/laps", keep: true)
     }
 
     func gglcEvents(year: Int) async throws -> [GGLCEventStub] {
-        try await get("api/gglc/events?year=\(year)", session: Self.gglcSession)
+        try await get("api/gglc/events?year=\(year)", session: Self.gglcSession, keep: true)
     }
 
     func gglcEvent(date: String) async throws -> GGLCEvent {
-        try await get("api/gglc/events/\(date)", session: Self.gglcSession)
+        try await get("api/gglc/events/\(date)", session: Self.gglcSession, keep: true)
     }
 
     func leaderboardCourses() async throws -> [LBCourse] {
-        try await get("api/leaderboard/courses")
+        try await get("api/leaderboard/courses", keep: true)
     }
 
     func leaderboardCourse(id: Int) async throws -> LBCourseDetail {
-        try await get("api/leaderboard/courses/\(id)")
+        try await get("api/leaderboard/courses/\(id)", keep: true)
     }
 
     func acceleration() async throws -> [AccelEntry] {
-        try await get("api/acceleration")
+        try await get("api/acceleration", keep: true)
     }
 
     func createAcceleration(_ input: AccelEntryInput) async throws -> AccelEntry {
@@ -165,8 +174,40 @@ struct APIClient {
     private struct Deleted: Decodable { let deleted: Int }
     private struct Created: Decodable { let id: Int }
 
-    private func get<T: Decodable>(_ path: String, session: URLSession = APIClient.session) async throws -> T {
-        try await send(path, method: "GET", session: session)
+    // Runs `load` against the answers `cache` kept instead of the server.
+    // `date` is when the oldest answer it used was fetched.
+    func fromCache<T>(_ load: (APIClient) async throws -> T) async -> (value: T, date: Date)? {
+        guard cache != nil else { return nil }
+        var offline = self
+        let reader = CacheReader()
+        offline.cacheReader = reader
+        guard let value = try? await load(offline), let date = reader.oldest else { return nil }
+        return (value, date)
+    }
+
+    // Worth falling back to saved answers: the server didn't answer, or the
+    // proxy in front of it did because it is down.
+    static func isUnreachable(_ error: Error) -> Bool {
+        if error is URLError { return true }
+        if let status = (error as? APIError)?.status { return status >= 500 }
+        return false
+    }
+
+    private func get<T: Decodable>(
+        _ path: String, session: URLSession = APIClient.session, keep: Bool = false
+    ) async throws -> T {
+        guard let url = URL(string: path, relativeTo: baseURL) else {
+            throw APIError(message: "Bad URL: \(baseURL)\(path)")
+        }
+        if let cacheReader {
+            guard keep, let saved = cache?.load(url) else { throw APIError(message: "Nothing saved for \(path)") }
+            cacheReader.note(saved.date)
+            return try JSONDecoder().decode(T.self, from: saved.data)
+        }
+        let data = try await data(path, method: "GET", session: session)
+        let value = try JSONDecoder().decode(T.self, from: data)
+        if keep { cache?.store(data, for: url) }
+        return value
     }
 
     private func send<T: Decodable, Body: Encodable>(
@@ -179,9 +220,19 @@ struct APIClient {
         _ path: String,
         method: String,
         body: Data? = nil,
+        contentType: String? = nil
+    ) async throws -> T {
+        let data = try await data(path, method: method, body: body, contentType: contentType)
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func data(
+        _ path: String,
+        method: String,
+        body: Data? = nil,
         contentType: String? = nil,
         session: URLSession = APIClient.session
-    ) async throws -> T {
+    ) async throws -> Data {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw APIError(message: "Bad URL: \(baseURL)\(path)")
         }
@@ -201,7 +252,7 @@ struct APIClient {
                 status: http.statusCode
             )
         }
-        return try JSONDecoder().decode(T.self, from: data)
+        return data
     }
 
     // FastAPI puts a string in `detail` for our own errors and a list of
@@ -218,5 +269,52 @@ struct APIClient {
             if !messages.isEmpty { return messages.joined(separator: "\n") }
         }
         return nil
+    }
+}
+
+// The last answer to each GET the app shows, so a phone that loses the server
+// keeps its results. Keyed by the full URL, so another server's answers never
+// mix in.
+struct ResponseCache {
+    let directory: URL
+
+    static let shared = ResponseCache(directory: .cachesDirectory.appending(path: "responses", directoryHint: .isDirectory))
+
+    func store(_ data: Data, for url: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: file(for: url), options: .atomic)
+    }
+
+    func load(_ url: URL) -> (data: Data, date: Date)? {
+        let file = file(for: url)
+        guard let data = try? Data(contentsOf: file),
+              let date = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        else { return nil }
+        return (data, date)
+    }
+
+    func prune(olderThan cutoff: Date) {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []
+        for file in files {
+            let date = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            if (date ?? .distantPast) < cutoff {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+    }
+
+    private func file(for url: URL) -> URL {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        return directory.appending(path: digest.map { String(format: "%02x", $0) }.joined() + ".json")
+    }
+}
+
+private final class CacheReader {
+    private(set) var oldest: Date?
+
+    func note(_ date: Date) {
+        oldest = min(oldest ?? date, date)
     }
 }

@@ -87,6 +87,19 @@ final class AppModel {
     var isLoading = false
     var errorMessage: String?
 
+    // When what a page shows was fetched, and whether the latest try to
+    // replace it failed, which is when the page says its data is old.
+    struct DataAge: Equatable {
+        var fetchedAt: Date
+        var refreshFailed = false
+    }
+    var eventsAge: DataAge?
+    var boardsAge: DataAge?
+    var driversAge: DataAge?
+    var leaderboardAge: DataAge?
+    var accelerationAge: DataAge?
+    var isRetrying = false
+
     static let liveRefreshInterval: TimeInterval = 10
     @ObservationIgnored private(set) var lastSessionLoad = Date.distantPast
 
@@ -234,6 +247,7 @@ final class AppModel {
         followedMeName = defaults.string(forKey: "followedMeName")
         followedFriendNames = defaults.stringArray(forKey: "followedFriendNames") ?? []
         migrateGlobalPersonalization()
+        ResponseCache.shared.prune(olderThan: .now.addingTimeInterval(-60 * 24 * 60 * 60))
     }
 
     private func migrateGlobalPersonalization() {
@@ -255,8 +269,70 @@ final class AppModel {
     private var client: APIClient {
         APIClient(
             baseURL: URL(string: baseURLString.hasSuffix("/") ? baseURLString : baseURLString + "/") ?? URL(filePath: "/"),
-            deviceToken: DeviceIdentity.token
+            deviceToken: DeviceIdentity.token,
+            cache: .shared
         )
+    }
+
+    // Asks the server, or when it can't be reached, takes the answer it gave
+    // last time.
+    private func fetch<T>(_ load: (APIClient) async throws -> T) async throws -> (value: T, age: DataAge) {
+        let client = client
+        do {
+            return (try await load(client), DataAge(fetchedAt: .now))
+        } catch {
+            guard APIClient.isUnreachable(error), let saved = await client.fromCache(load) else { throw error }
+            return (saved.value, DataAge(fetchedAt: saved.date, refreshFailed: true))
+        }
+    }
+
+    // A list built from several answers is as old as its oldest one.
+    private static func combined(_ ages: [DataAge?]) -> DataAge? {
+        let ages = ages.compactMap { $0 }
+        guard let oldest = ages.map(\.fetchedAt).min() else { return nil }
+        return DataAge(fetchedAt: oldest, refreshFailed: ages.contains { $0.refreshFailed })
+    }
+
+    var staleSince: Date? {
+        let age: DataAge? = switch screen {
+        case .driver, .compare: driversAge
+        case .leaderboard, .leaderboardDriver: leaderboardAge
+        case .acceleration, .accelerationEntry: accelerationAge
+        case nil:
+            switch tab {
+            case .live, .friends: driversAge
+            case .events: eventsAge
+            case .boards: boardsAge
+            case .settings: nil
+            }
+        }
+        return age?.refreshFailed == true ? age?.fetchedAt : nil
+    }
+
+    static func staleLabel(_ date: Date, now: Date = .now) -> String {
+        Calendar.current.isDate(date, inSameDayAs: now)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+    }
+
+    func retryStale() async {
+        guard !isRetrying else { return }
+        isRetrying = true
+        defer { isRetrying = false }
+        switch screen {
+        case .leaderboard(let courseID), .leaderboardDriver(let courseID, _):
+            await fetchLeaderboard(courseID: courseID)
+        case .acceleration, .accelerationEntry:
+            await fetchAcceleration()
+        case .driver, .compare, nil:
+            if tab == .boards {
+                await refreshLeaderboardEvents()
+            } else if eventsAge?.refreshFailed == true || tab == .events {
+                await loadEvents()
+            } else {
+                await loadSessionData()
+            }
+        }
     }
 
     // Like the custom server URL, a custom org only applies in dev mode, so
@@ -480,6 +556,7 @@ final class AppModel {
         // Stale rows from the old session would make a failed load look like
         // the switch never happened, especially between same-named events.
         drivers = []
+        driversAge = nil
         compareSelection = []
         friendsScreen = nil
         liveScrollOffset = 0
@@ -539,16 +616,20 @@ final class AppModel {
         isLoading = true
         errorMessage = nil
         do {
-            async let orgTask = client.org(orgID: orgID)
+            let orgID = orgID
+            async let orgTask = fetch { try await $0.org(orgID: orgID) }
             async let gglcTask = loadGGLCEvents()
             async let leaderboardTask = loadLeaderboardEvents()
-            let speedhiveEvents = try await client.events(orgID: orgID)
-            let gglcEvents = await gglcTask
-            let leaderboardEvents = await leaderboardTask
-            events = (speedhiveEvents + gglcEvents)
+            let speedhive = try await fetch { try await $0.events(orgID: orgID) }
+            let gglc = await gglcTask
+            let leaderboard = await leaderboardTask
+            let leaderboardEvents = leaderboard?.events ?? events.filter { $0.source == .leaderboard }
+            events = (speedhive.value + gglc.events)
                 .sorted { ($0.startDate ?? "") > ($1.startDate ?? "") }
                 + leaderboardEvents
-            orgName = (try? await orgTask)?.name
+            eventsAge = Self.combined([speedhive.age, gglc.age])
+            if let leaderboard { boardsAge = leaderboard.age }
+            orgName = (try? await orgTask)?.value.name
             // Event dates decide which marks the server is told about.
             schedulePushSync()
             let notified = pendingEventID.flatMap { id in events.first { $0.id == id }?.id }
@@ -566,17 +647,19 @@ final class AppModel {
             }
         } catch {
             errorMessage = error.localizedDescription
+            eventsAge?.refreshFailed = true
             isLoading = false
         }
     }
 
     // GGLC failures only cost the extra events; Speedhive stays usable.
-    private func loadGGLCEvents() async -> [SHEvent] {
+    private func loadGGLCEvents() async -> (events: [SHEvent], age: DataAge?) {
         let year = Calendar.current.component(.year, from: .now)
-        async let current = client.gglcEvents(year: year)
-        async let previous = client.gglcEvents(year: year - 1)
-        let stubs = ((try? await current) ?? []) + ((try? await previous) ?? [])
-        return stubs.compactMap { stub in
+        async let current = fetch { try await $0.gglcEvents(year: year) }
+        async let previous = fetch { try await $0.gglcEvents(year: year - 1) }
+        let years = [try? await current, try? await previous].compactMap { $0 }
+        let stubs = years.flatMap(\.value)
+        let events = stubs.compactMap { stub in
             Self.gglcEventID(date: stub.date).map {
                 SHEvent(
                     id: $0,
@@ -587,15 +670,21 @@ final class AppModel {
                 )
             }
         }
+        return (events, Self.combined(years.map(\.age)))
     }
 
-    // Like GGLC, leaderboard failures only cost the extra rows.
-    private func loadLeaderboardEvents() async -> [SHEvent] {
-        let courses = (try? await client.leaderboardCourses()) ?? []
-        leaderboardCourses = courses
-        return courses
+    // Like GGLC, leaderboard failures only cost the extra rows. Nil means
+    // nothing came back, so the boards already shown stay.
+    private func loadLeaderboardEvents() async -> (events: [SHEvent], age: DataAge)? {
+        guard let courses = try? await fetch({ try await $0.leaderboardCourses() }) else {
+            boardsAge?.refreshFailed = true
+            return nil
+        }
+        leaderboardCourses = courses.value
+        let events = courses.value
             .filter { !hiddenCourseIDs.contains($0.id) }
             .map(Self.leaderboardEvent)
+        return (events, courses.age)
     }
 
     private static func leaderboardEvent(_ course: LBCourse) -> SHEvent {
@@ -612,8 +701,9 @@ final class AppModel {
     }
 
     func refreshLeaderboardEvents() async {
-        let leaderboardEvents = await loadLeaderboardEvents()
-        events = events.filter { $0.source != .leaderboard } + leaderboardEvents
+        guard let leaderboard = await loadLeaderboardEvents() else { return }
+        events = events.filter { $0.source != .leaderboard } + leaderboard.events
+        boardsAge = leaderboard.age
     }
 
     var ownedCourseCount: Int { leaderboardCourses.count { $0.isOwner } }
@@ -832,29 +922,45 @@ final class AppModel {
     }
 
     private func loadLeaderboard(courseID: Int) {
-        leaderboardError = nil
         leaderboardDetail = nil
-        Task {
-            do {
-                let detail = try await client.leaderboardCourse(id: courseID)
-                guard case .some(.leaderboard(courseID)) = screen else { return }
-                leaderboardDetail = detail
-            } catch {
-                guard case .some(.leaderboard(courseID)) = screen else { return }
-                leaderboardError = error.localizedDescription
+        leaderboardAge = nil
+        Task { await fetchLeaderboard(courseID: courseID) }
+    }
+
+    private func fetchLeaderboard(courseID: Int) async {
+        leaderboardError = nil
+        func stillOpen() -> Bool {
+            switch screen {
+            case .leaderboard(courseID), .leaderboardDriver(courseID, _): true
+            default: false
             }
+        }
+        do {
+            let detail = try await fetch { try await $0.leaderboardCourse(id: courseID) }
+            guard stillOpen() else { return }
+            leaderboardDetail = detail.value
+            leaderboardAge = detail.age
+        } catch {
+            guard stillOpen() else { return }
+            leaderboardError = error.localizedDescription
+            leaderboardAge?.refreshFailed = true
         }
     }
 
     // The last list stays up while it reloads; the board changes rarely.
     private func loadAcceleration() {
+        Task { await fetchAcceleration() }
+    }
+
+    private func fetchAcceleration() async {
         accelerationError = nil
-        Task {
-            do {
-                accelerationEntries = try await client.acceleration()
-            } catch {
-                accelerationError = error.localizedDescription
-            }
+        do {
+            let entries = try await fetch { try await $0.acceleration() }
+            accelerationEntries = entries.value
+            accelerationAge = entries.age
+        } catch {
+            accelerationError = error.localizedDescription
+            accelerationAge?.refreshFailed = true
         }
     }
 
@@ -885,7 +991,7 @@ final class AppModel {
         do {
             let fetched = eventID < 0
                 ? Self.gglcSessions(eventID: eventID)
-                : try await client.sessions(eventID: eventID)
+                : try await fetch { try await $0.sessions(eventID: eventID) }.value
             guard selectedEventID == eventID else { return }
             sessions = fetched
             let saved = sessionChoice[String(eventID)]
@@ -917,18 +1023,20 @@ final class AppModel {
         errorMessage = nil
         lastSessionLoad = .now
         do {
-            let loaded = try await client.drivers(sessionID: sessionID)
+            let loaded = try await fetch { try await $0.drivers(sessionID: sessionID) }
             guard selectedSessionID == sessionID else { return }
-            show(loaded)
+            show(loaded.value)
+            driversAge = loaded.age
         } catch {
             guard selectedSessionID == sessionID else { return }
             errorMessage = error.localizedDescription
+            driversAge?.refreshFailed = true
         }
         isLoading = false
     }
 
     // The automatic reload: no spinner, and a failure leaves the last results
-    // up rather than replacing a live board with an error every few seconds.
+    // up, marked as old, rather than replacing a live board with an error.
     func refreshSessionData() async {
         lastSessionLoad = .now
         guard let sessionID = selectedSessionID, !isLoading else { return }
@@ -938,10 +1046,14 @@ final class AppModel {
            selectedEventID == eventID, fetched != sessions {
             sessions = fetched
         }
-        guard let loaded = try? await client.drivers(sessionID: sessionID),
-              selectedSessionID == sessionID
-        else { return }
+        let loaded = try? await client.drivers(sessionID: sessionID)
+        guard selectedSessionID == sessionID else { return }
+        guard let loaded else {
+            driversAge?.refreshFailed = true
+            return
+        }
         show(loaded)
+        driversAge = DataAge(fetchedAt: .now)
         errorMessage = nil
     }
 

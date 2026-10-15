@@ -25,8 +25,10 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -99,6 +101,8 @@ private fun NavBackStackEntry.routeKind(): RouteKind {
         d.hasRoute<SetupRoute>() -> RouteKind.SETUP
         d.hasRoute<DriverRoute>() -> RouteKind.DRIVER
         d.hasRoute<CompareRoute>() -> RouteKind.COMPARE
+        d.hasRoute<LeaderboardRoute>() || d.hasRoute<LeaderboardDriverRoute>() -> RouteKind.LEADERBOARD
+        d.hasRoute<AccelerationRoute>() || d.hasRoute<AccelerationEntryRoute>() -> RouteKind.ACCELERATION
         else -> RouteKind.OTHER
     }
 }
@@ -180,6 +184,7 @@ fun AppScaffold(vm: AppViewModel, updater: Updater) {
     ) {
         Header(vm, state, nav, entry)
         UpdateBanner(updater)
+        state.staleSince?.let { StaleBanner(it, state.isRetrying, onRetry = vm::retryStale) }
         Box(modifier = Modifier.weight(1f)) {
             NavHost(
                 navController = nav,
@@ -276,6 +281,33 @@ private fun LiveRefresh(vm: AppViewModel, state: AppState) {
 }
 
 private const val LIVE_REFRESH_MILLIS = 10_000L
+
+@Composable
+private fun StaleBanner(since: Long, retrying: Boolean, onRetry: () -> Unit) {
+    val colors = EG.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.pinnedBg)
+            .clickable(enabled = !retrying, onClickLabel = "Try again", onClick = onRetry)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        EGTag("OFFLINE", background = colors.darkRed, size = 10f)
+        EGText(
+            "Couldn't refresh. Showing data from ${AppState.staleLabel(since)}.",
+            11.5f,
+            weight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f),
+        )
+        if (retrying) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = colors.darkRed, strokeWidth = 2.dp)
+        } else {
+            Icon(Icons.Filled.Refresh, contentDescription = null, tint = colors.darkRed, modifier = Modifier.size(18.dp))
+        }
+    }
+}
 
 private data class HeaderInfo(val tag: String, val title: String, val sub: String?, val changesEvent: Boolean)
 

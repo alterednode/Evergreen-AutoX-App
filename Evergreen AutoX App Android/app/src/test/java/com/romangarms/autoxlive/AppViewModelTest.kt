@@ -1,6 +1,7 @@
 package com.romangarms.autoxlive
 
 import com.romangarms.autoxlive.data.AccelEntry
+import com.romangarms.autoxlive.data.ApiException
 import com.romangarms.autoxlive.data.Driver
 import com.romangarms.autoxlive.data.GGLCEventStub
 import com.romangarms.autoxlive.data.LBBlock
@@ -11,6 +12,7 @@ import com.romangarms.autoxlive.data.Run
 import com.romangarms.autoxlive.data.SHEvent
 import com.romangarms.autoxlive.data.SHOrg
 import com.romangarms.autoxlive.data.SHSession
+import com.romangarms.autoxlive.data.Saved
 import com.romangarms.autoxlive.data.SettingsStore
 import com.romangarms.autoxlive.data.StoredSettings
 import kotlinx.coroutines.CompletableDeferred
@@ -48,16 +50,36 @@ private class FakeApi : AutoXApi {
     val gates = mutableMapOf<Int, CompletableDeferred<Unit>>()
     val driversBySession = mutableMapOf<Int, List<Driver>>()
     var failDrivers = false
+    var offline = false
+    var saved: FakeApi? = null
+    var savedAt = 0L
 
-    override suspend fun org(orgId: Int) = SHOrg(orgId, "Org")
-    override suspend fun events(orgId: Int, limit: Int) = events
+    private fun reach() {
+        if (offline) throw ApiException("Unable to resolve host")
+    }
+
+    override suspend fun org(orgId: Int) = reach().let { SHOrg(orgId, "Org") }
+    override suspend fun events(orgId: Int, limit: Int) = reach().let { events.toList() }
     override suspend fun sessions(eventId: Int): List<SHSession> {
+        reach()
         gates[eventId]?.await()
         return sessionsByEvent[eventId] ?: emptyList()
     }
     override suspend fun drivers(sessionId: Int): List<Driver> {
+        reach()
         if (failDrivers) error("offline")
         return driversBySession[sessionId] ?: emptyList()
+    }
+    override suspend fun <T> fromCache(load: suspend AutoXApi.() -> T): Saved<T>? =
+        saved?.let { Saved(it.load(), savedAt) }
+
+    // What a phone that loaded everything once has on disk.
+    fun snapshot(at: Long) = FakeApi().also {
+        it.events += events
+        it.sessionsByEvent += sessionsByEvent
+        it.driversBySession += driversBySession
+        saved = it
+        savedAt = at
     }
     override suspend fun gglcEvents(year: Int) = emptyList<GGLCEventStub>()
     override suspend fun leaderboardCourses() = emptyList<LBCourse>()
@@ -186,5 +208,77 @@ class AppViewModelTest {
         assertFalse(vm.state.value.wantsLiveRefresh(today))
         vm.setRoute(RouteKind.DRIVER)
         assertTrue(vm.state.value.wantsLiveRefresh(today))
+    }
+
+    @Test
+    fun launchingOfflineShowsTheSavedResultsAsOld() = runTest(dispatcher) {
+        val api = api().apply {
+            snapshot(at = 1_000L)
+            offline = true
+        }
+        val vm = AppViewModel(api, MemoryStore()) { today }
+        vm.start()
+        advanceUntilIdle()
+        assertEquals(1, vm.state.value.selectedEventId)
+        assertEquals(2, vm.state.value.drivers.size)
+        assertNull(vm.state.value.errorMessage)
+        assertEquals(1_000L, vm.state.value.staleSince)
+        vm.setRoute(RouteKind.EVENTS)
+        assertEquals(1_000L, vm.state.value.staleSince)
+        vm.setRoute(RouteKind.SETUP)
+        assertNull(vm.state.value.staleSince)
+    }
+
+    @Test
+    fun launchingOfflineWithNothingSavedStillSaysSo() = runTest(dispatcher) {
+        val api = api().apply { offline = true }
+        val vm = AppViewModel(api, MemoryStore()) { today }
+        vm.start()
+        advanceUntilIdle()
+        assertTrue(vm.state.value.events.isEmpty())
+        assertEquals("Unable to resolve host", vm.state.value.errorMessage)
+        assertNull(vm.state.value.staleSince)
+    }
+
+    @Test
+    fun aFailedLiveRefreshMarksTheResultsOldUntilOneSucceeds() = runTest(dispatcher) {
+        val api = api()
+        val vm = AppViewModel(api, MemoryStore()) { today }
+        vm.start()
+        advanceUntilIdle()
+        assertNull(vm.state.value.staleSince)
+        val fetchedAt = vm.state.value.driversAge!!.fetchedAt
+
+        api.offline = true
+        vm.refreshSessionData()
+        assertEquals(2, vm.state.value.drivers.size)
+        assertEquals(fetchedAt, vm.state.value.staleSince)
+
+        api.offline = false
+        vm.retryStale()
+        advanceUntilIdle()
+        assertNull(vm.state.value.staleSince)
+        assertFalse(vm.state.value.isRetrying)
+    }
+
+    @Test
+    fun anErrorFromAReachableServerDoesNotFallBackToSavedResults() = runTest(dispatcher) {
+        val api = api().apply {
+            snapshot(at = 1_000L)
+            failDrivers = true
+        }
+        val vm = AppViewModel(api, MemoryStore()) { today }
+        vm.start()
+        advanceUntilIdle()
+        assertTrue(vm.state.value.drivers.isEmpty())
+        assertEquals("offline", vm.state.value.errorMessage)
+    }
+
+    @Test
+    fun staleLabelShowsTheDayOnlyWhenItIsNotToday() {
+        val zone = java.time.ZoneOffset.UTC
+        val millis = java.time.LocalDateTime.of(2026, 10, 9, 14, 41).toInstant(zone).toEpochMilli()
+        assertFalse(AppState.staleLabel(millis, zone, LocalDate.of(2026, 10, 9)).contains("Oct"))
+        assertTrue(AppState.staleLabel(millis, zone, LocalDate.of(2026, 10, 10)).startsWith("Oct 9"))
     }
 }
