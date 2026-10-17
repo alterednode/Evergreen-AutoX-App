@@ -73,7 +73,11 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["X-Leaderboard-Key"],
 )
-client = SpeedhiveClient.create()
+# The library's default is a 30-second timeout tried four times, which leaves
+# a request hanging for two minutes when Speedhive stalls. The cache serves the
+# last answer meanwhile, so fail fast and try once more at most.
+client = SpeedhiveClient.create(timeout=8.0)
+client.client.get_httpx_client()._transport.max_retries = 1
 
 STATIC_DIR = Path(__file__).parent / "static"
 
