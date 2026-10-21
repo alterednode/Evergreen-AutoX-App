@@ -58,7 +58,6 @@ fun FriendsScreen(
 ) {
     val colors = EG.colors
     var renaming by rememberSaveable { mutableStateOf<String?>(null) }
-    var confirmingReset by rememberSaveable { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val friends = state.friends
@@ -138,12 +137,6 @@ fun FriendsScreen(
                     }
                 }
             }
-
-            EGButton(
-                "RESET PINS & NICKNAMES",
-                onClick = { confirmingReset = true },
-                modifier = Modifier.padding(top = 8.dp),
-            )
         }
     }
 
@@ -173,21 +166,6 @@ fun FriendsScreen(
                 }) { Text("Save") }
             },
             dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } },
-        )
-    }
-
-    if (confirmingReset) {
-        AlertDialog(
-            onDismissRequest = { confirmingReset = false },
-            title = { Text("Reset pins and nicknames?") },
-            text = { Text("This clears every pinned driver, nickname and \"this is me\" choice, for every event.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.resetPersonalization()
-                    confirmingReset = false
-                }) { Text("Reset", color = colors.red) }
-            },
-            dismissButton = { TextButton(onClick = { confirmingReset = false }) { Text("Cancel") } },
         )
     }
 }

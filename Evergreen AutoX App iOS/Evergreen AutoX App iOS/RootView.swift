@@ -7,6 +7,7 @@ struct RootView: View {
     @State private var nav = NavTracker()
     @State private var showOrgPrompt = false
     @State private var orgIDText = ""
+    @State private var confirmingReset = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -142,6 +143,8 @@ struct RootView: View {
                 driverMenu(driver)
             } else if model.tab == .events, model.screen == nil {
                 eventsMenu
+            } else if model.tab == .friends, model.screen == nil {
+                friendsMenu
             } else if showsLiveMenu {
                 liveMenu
             }
@@ -218,7 +221,7 @@ struct RootView: View {
 
     private var hasHeaderMenu: Bool {
         if case .driver = model.screen { return true }
-        return model.screen == nil && (model.tab == .events || showsLiveMenu)
+        return model.screen == nil && (model.tab == .events || model.tab == .friends || showsLiveMenu)
     }
 
     private var liveMenu: some View {
@@ -264,6 +267,35 @@ struct RootView: View {
             menuIcon
         }
         .padding(.trailing, 4)
+    }
+
+    private var friendsMenu: some View {
+        Menu {
+            if !model.friends.isEmpty {
+                ShareLink(item: model.friendsShareText) {
+                    Label("Share List", systemImage: "square.and.arrow.up")
+                }
+            }
+            Button(role: .destructive) {
+                confirmingReset = true
+            } label: {
+                Label("Reset Pins & Nicknames…", systemImage: "arrow.counterclockwise")
+            }
+        } label: {
+            menuIcon
+        }
+        .padding(.trailing, 4)
+        .confirmationDialog(
+            "Reset pins and nicknames?",
+            isPresented: $confirmingReset,
+            titleVisibility: .visible
+        ) {
+            Button("Reset", role: .destructive) {
+                model.resetPersonalization()
+            }
+        } message: {
+            Text("This clears every pinned driver, nickname and \"this is me\" choice, for every event.")
+        }
     }
 
     private func driverMenu(_ driver: Driver) -> some View {

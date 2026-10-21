@@ -4,7 +4,6 @@ struct FriendsView: View {
     @Environment(AppModel.self) private var model
     @State private var renaming: Driver?
     @State private var renameText = ""
-    @State private var confirmingReset = false
 
     var body: some View {
         ScrollView {
@@ -49,11 +48,6 @@ struct FriendsView: View {
                     .buttonStyle(EGButtonStyle(kind: .primary))
                 }
 
-                Button("RESET PINS & NICKNAMES") {
-                    confirmingReset = true
-                }
-                .buttonStyle(EGButtonStyle())
-                .padding(.top, 8)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -69,17 +63,6 @@ struct FriendsView: View {
             Button("Cancel", role: .cancel) {}
         } message: { driver in
             Text("Shown instead of \(driver.name). Leave it empty to use their real name.")
-        }
-        .confirmationDialog(
-            "Reset pins and nicknames?",
-            isPresented: $confirmingReset,
-            titleVisibility: .visible
-        ) {
-            Button("Reset", role: .destructive) {
-                model.resetPersonalization()
-            }
-        } message: {
-            Text("This clears every pinned driver, nickname and \"this is me\" choice, for every event.")
         }
     }
 

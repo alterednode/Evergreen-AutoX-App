@@ -465,6 +465,21 @@ final class AppModel {
         nicknames[driver.startNumber] ?? driver.name
     }
 
+    // The list people paste into their car group chats, fastest first.
+    var friendsShareText: String {
+        var title = "\(selectedEvent?.name ?? "AutoX") Leaderboard"
+        if let date = Self.shortEventDate(selectedEvent?.startDate) {
+            title += " (\(date))"
+        }
+        let lines = friends.sorted { $0.position < $1.position }.map { driver in
+            var name = displayName(driver)
+            if name != driver.name { name += " (\(driver.name))" }
+            let car = ["#\(driver.startNumber)", driver.vehicle].compactMap(\.self).joined(separator: ", ")
+            return "\(name) (\(car)) - \(driver.best.map(LapTime.format) ?? "no time")"
+        }
+        return ([title] + lines).joined(separator: "\n")
+    }
+
     func classCount(_ carClass: String?) -> Int {
         drivers.count { $0.carClass == carClass }
     }
@@ -504,6 +519,16 @@ final class AppModel {
         parser.dateFormat = "yyyy-MM-dd"
         guard let date = parser.date(from: dateString) else { return nil }
         return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
+    }
+
+    static func shortEventDate(_ dateString: String?) -> String? {
+        guard let dateString else { return nil }
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.dateFormat = "yyyy-MM-dd"
+        guard let date = parser.date(from: String(dateString.prefix(10))) else { return nil }
+        parser.dateFormat = "M/d/yy"
+        return parser.string(from: date)
     }
 
     func select(tab: Tab) {

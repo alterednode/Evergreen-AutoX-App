@@ -1,5 +1,6 @@
 package com.romangarms.autoxlive.ui
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -371,6 +373,7 @@ private fun Header(vm: AppViewModel, state: AppState, nav: NavHostController, en
     val canGoBack = entry != null && Tab.entries.none { it.kind == kind }
     val colors = EG.colors
     var renaming by rememberSaveable { mutableStateOf<String?>(null) }
+    var confirmingReset by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -398,7 +401,7 @@ private fun Header(vm: AppViewModel, state: AppState, nav: NavHostController, en
                     EGText(info.sub, 11.5f, color = colors.grayDark, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
                 }
             }
-            HeaderMenu(vm, state, entry, kind, onRename = { renaming = it })
+            HeaderMenu(vm, state, entry, kind, onRename = { renaming = it }, onReset = { confirmingReset = true })
         }
         if (info.sub != null && info.changesEvent) {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -416,6 +419,21 @@ private fun Header(vm: AppViewModel, state: AppState, nav: NavHostController, en
         }
         Spacer(Modifier.height(12.dp))
         Box(Modifier.fillMaxWidth().height(2.dp).background(colors.divider))
+    }
+
+    if (confirmingReset) {
+        AlertDialog(
+            onDismissRequest = { confirmingReset = false },
+            title = { Text("Reset pins and nicknames?") },
+            text = { Text("This clears every pinned driver, nickname and \"this is me\" choice, for every event.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.resetPersonalization()
+                    confirmingReset = false
+                }) { Text("Reset", color = colors.red) }
+            },
+            dismissButton = { TextButton(onClick = { confirmingReset = false }) { Text("Cancel") } },
+        )
     }
 
     renaming?.let { number ->
@@ -478,8 +496,10 @@ private fun HeaderMenu(
     entry: NavBackStackEntry?,
     kind: RouteKind,
     onRename: (String) -> Unit,
+    onReset: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val items: List<Pair<String, () -> Unit>> = when {
         entry?.destination?.hasRoute<DriverRoute>() == true -> {
             val number = entry.toRoute<DriverRoute>().number
@@ -496,6 +516,15 @@ private fun HeaderMenu(
             }
         }
         kind == RouteKind.EVENTS -> listOf("Refresh" to { vm.refreshEvents() })
+        kind == RouteKind.FRIENDS -> listOfNotNull(
+            ("Share list" to {
+                val send = Intent(Intent.ACTION_SEND)
+                    .setType("text/plain")
+                    .putExtra(Intent.EXTRA_TEXT, state.friendsShareText)
+                context.startActivity(Intent.createChooser(send, null))
+            }).takeIf { state.friends.isNotEmpty() },
+            "Reset pins & nicknames…" to onReset,
+        )
         kind == RouteKind.LIVE && state.drivers.isNotEmpty() -> listOf(
             "Sort by overall position" to { vm.setLiveSortByClass(false) },
             "Sort by class position" to { vm.setLiveSortByClass(true) },

@@ -7,6 +7,7 @@ import com.romangarms.autoxlive.data.LBBlock
 import com.romangarms.autoxlive.data.LBCourse
 import com.romangarms.autoxlive.data.LBCourseDetail
 import com.romangarms.autoxlive.data.LBEntry
+import com.romangarms.autoxlive.data.LapTime
 import com.romangarms.autoxlive.data.SHEvent
 import com.romangarms.autoxlive.data.SHSession
 import com.romangarms.autoxlive.data.StoredSettings
@@ -107,6 +108,20 @@ data class AppState(
 
     fun displayName(driver: Driver): String = nicknames[driver.startNumber] ?: driver.name
 
+    // The list people paste into their car group chats, fastest first.
+    val friendsShareText: String
+        get() {
+            val event = selectedEvent
+            val date = shortEventDate(event?.startDate)?.let { " ($it)" } ?: ""
+            val lines = friends.sortedBy { it.position }.map { driver ->
+                val shown = displayName(driver)
+                val name = if (shown != driver.name) "$shown (${driver.name})" else shown
+                val car = listOfNotNull("#${driver.startNumber}", driver.vehicle).joinToString(", ")
+                "$name ($car) - ${driver.best?.let(LapTime::format) ?: "no time"}"
+            }
+            return (listOf("${event?.name ?: "AutoX"} Leaderboard$date") + lines).joinToString("\n")
+        }
+
     fun classCount(carClass: String?): Int = drivers.count { it.carClass == carClass }
 
     fun gapToMe(driver: Driver): Double? {
@@ -180,6 +195,13 @@ data class AppState(
             iso ?: return null
             return runCatching {
                 LocalDateTime.parse(iso.take(19)).format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
+            }.getOrNull()
+        }
+
+        fun shortEventDate(date: String?): String? {
+            date ?: return null
+            return runCatching {
+                LocalDate.parse(date.take(10)).format(DateTimeFormatter.ofPattern("M/d/yy", Locale.US))
             }.getOrNull()
         }
 

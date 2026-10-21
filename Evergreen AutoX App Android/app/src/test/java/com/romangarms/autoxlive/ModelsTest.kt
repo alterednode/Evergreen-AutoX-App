@@ -1,11 +1,15 @@
 package com.romangarms.autoxlive
 
 import com.romangarms.autoxlive.data.ApiClient
+import com.romangarms.autoxlive.data.Driver
+import com.romangarms.autoxlive.data.GGLCDriver
+import com.romangarms.autoxlive.data.GGLCRun
 import com.romangarms.autoxlive.data.LBCourse
 import com.romangarms.autoxlive.data.LBEntry
 import com.romangarms.autoxlive.data.LBRun
 import com.romangarms.autoxlive.data.LapTime
 import com.romangarms.autoxlive.data.SHEvent
+import com.romangarms.autoxlive.data.StoredSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -80,5 +84,45 @@ class ModelsTest {
         assertEquals("2026-08-01", com.romangarms.autoxlive.data.SessionResults.gglcDate(-20260801))
         assertEquals(17, AppState.leaderboardCourseId(AppState.leaderboardEventId(17)))
         assertTrue(AppState.leaderboardEventId(1) < -99_999_999)
+    }
+
+    @Test
+    fun friendsShareListIsFastestFirstWithNicknames() {
+        fun driver(position: Int, name: String, car: String, model: String, total: Double?) = Driver.gglc(
+            position,
+            GGLCDriver(
+                name = name,
+                car = car,
+                make = "BMW",
+                model = model,
+                carClass = "STS",
+                runs = listOfNotNull(total?.let { GGLCRun(1, "", total, 0, false, total, true) }),
+            ),
+            carClass = "STS",
+            positionInClass = position,
+        )
+        val state = AppState(
+            settings = StoredSettings(
+                pinsByEvent = mapOf("-20261017" to listOf("4", "300")),
+                nicknamesByEvent = mapOf("-20261017" to mapOf("300" to "@jloolinol")),
+                meNumberByEvent = mapOf("-20261017" to "186"),
+            ),
+            events = listOf(SHEvent(-20261017, "GGLC Autocross", "2026-10-17")),
+            selectedEventId = -20261017,
+            drivers = listOf(
+                driver(1, "Jolion", "300", "M3", 33.26),
+                driver(2, "Roman", "186", "Z4M", 34.19),
+                driver(3, "Sky", "4", "", null),
+            ),
+        )
+        assertEquals(
+            """
+            GGLC Autocross Leaderboard (10/17/26)
+            @jloolinol (Jolion) (#300, BMW M3) - 33.260
+            Roman (#186, BMW Z4M) - 34.190
+            Sky (#4, BMW) - no time
+            """.trimIndent(),
+            state.friendsShareText,
+        )
     }
 }
