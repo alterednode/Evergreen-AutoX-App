@@ -69,6 +69,7 @@ struct AccelerationView: View {
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .refreshable { await model.fetchAcceleration() }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .task { await model.loadSubmissions() }
         .sheet(isPresented: $showForm) {
@@ -253,6 +254,8 @@ struct AccelerationEntryView: View {
                 .foregroundStyle(Color.egGrayDark)
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scrollsToRefresh()
+                .refreshable { await model.fetchAcceleration() }
         }
     }
 
@@ -316,6 +319,7 @@ struct AccelerationEntryView: View {
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .refreshable { await model.fetchAcceleration() }
         .sheet(isPresented: $reporting) {
             ReportSheet(target: .acceleration(entry.id), subject: "\(entry.title) on the Acceleration board") {
                 notice = "Report sent. Thanks."

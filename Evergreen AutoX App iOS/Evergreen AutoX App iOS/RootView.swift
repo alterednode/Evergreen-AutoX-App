@@ -381,6 +381,7 @@ struct RootView: View {
                     .padding(.top, 9)
                     .padding(.bottom, 4)
                     .foregroundStyle(model.tab == tab ? Color.egRed : Color.egGray)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }

@@ -85,7 +85,13 @@ data class GGLCDriver(
     val carClass: String,
     val indexed: Double? = null,
     val runs: List<GGLCRun>,
-)
+) {
+    // Some entrants type the make into the model column too ("Nissan Nissan").
+    val carName: String
+        get() = (if (model.equals(make, ignoreCase = true)) listOf(make) else listOf(make, model))
+            .filter { it.isNotEmpty() }
+            .joinToString(" ")
+}
 
 @Serializable
 data class GGLCRun(
@@ -274,6 +280,7 @@ data class Driver(
     // GGLC scores only the first 5 runs; we rank by best of all runs instead.
     val officialRunNumber: Int?,
     private val bestTimeString: String?,
+    val vehicle: String? = null,
 ) {
     val id: Int get() = position
 
@@ -305,7 +312,7 @@ data class Driver(
 
         // GGLC "total" already includes cone penalties (1s/cone).
         fun gglc(position: Int, gglc: GGLCDriver, carClass: String?, positionInClass: Int?): Driver {
-            val carName = listOf(gglc.make, gglc.model).filter { it.isNotEmpty() }.joinToString(" ")
+            val carName = gglc.carName
             val name = when {
                 gglc.name.isNotEmpty() -> gglc.name
                 carName.isNotEmpty() -> carName
@@ -327,6 +334,9 @@ data class Driver(
                 },
                 officialRunNumber = gglc.runs.firstOrNull { it.best && it.total != null }?.run,
                 bestTimeString = null,
+                vehicle = carName.takeIf {
+                    it.isNotEmpty() && it != name && !it.equals(carClass ?: "", ignoreCase = true)
+                },
             )
         }
 

@@ -147,6 +147,7 @@ struct EGButtonStyle: ButtonStyle {
                     Rectangle().strokeBorder(Color.egDivider, lineWidth: 2)
                 }
             }
+            .contentShape(Rectangle())
             .opacity(configuration.isPressed ? 0.55 : 1)
     }
 }

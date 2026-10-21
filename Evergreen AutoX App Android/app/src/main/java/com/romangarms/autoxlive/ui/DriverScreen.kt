@@ -55,7 +55,7 @@ data class EGStat(val label: String, val value: String, val color: Color)
 fun DriverScreen(vm: AppViewModel, state: AppState, number: String, openCompare: (String, String) -> Unit) {
     val driver = state.driver(number)
     if (driver == null) {
-        MissingDriver(vm, state)
+        EGPullable { MissingDriver(vm, state) }
         return
     }
     val colors = EG.colors
@@ -74,6 +74,7 @@ fun DriverScreen(vm: AppViewModel, state: AppState, number: String, openCompare:
                     }
                 }
                 if (nickname != null) EGText(driver.name, 12f, color = colors.grayDark)
+                driver.vehicle?.let { EGText(it, 14f, weight = FontWeight.SemiBold, color = colors.grayDark) }
                 Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     driver.carClass?.let { EGTag(it, size = 10f) }
                     EGOutlineTag("CAR #${driver.startNumber}")

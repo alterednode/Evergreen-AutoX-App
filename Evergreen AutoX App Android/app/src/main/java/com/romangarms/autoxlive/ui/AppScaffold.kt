@@ -220,36 +220,46 @@ fun AppScaffold(vm: AppViewModel, updater: Updater) {
                 composable<SetupRoute> { SetupScreen(vm, state, updater) }
                 composable<DriverRoute> { backStackEntry ->
                     val route = backStackEntry.toRoute<DriverRoute>()
-                    DriverScreen(vm, state, route.number, openCompare = { a, b -> nav.navigate(CompareRoute(a, b)) })
+                    EGRefreshBox(vm::reloadResults) {
+                        DriverScreen(vm, state, route.number, openCompare = { a, b -> nav.navigate(CompareRoute(a, b)) })
+                    }
                 }
                 composable<CompareRoute> { backStackEntry ->
                     val route = backStackEntry.toRoute<CompareRoute>()
-                    CompareScreen(vm, state, route.a, route.b)
+                    EGRefreshBox(vm::reloadResults) { CompareScreen(vm, state, route.a, route.b) }
                 }
                 composable<LeaderboardRoute> { backStackEntry ->
                     val route = backStackEntry.toRoute<LeaderboardRoute>()
-                    LeaderboardScreen(
-                        vm,
-                        state,
-                        route.courseId,
-                        openDriver = { nav.navigate(LeaderboardDriverRoute(route.courseId, it)) },
-                    )
+                    EGRefreshBox(vm::reloadLeaderboard) {
+                        LeaderboardScreen(
+                            vm,
+                            state,
+                            route.courseId,
+                            openDriver = { nav.navigate(LeaderboardDriverRoute(route.courseId, it)) },
+                        )
+                    }
                 }
                 composable<LeaderboardDriverRoute> { backStackEntry ->
                     val route = backStackEntry.toRoute<LeaderboardDriverRoute>()
-                    LeaderboardDriverScreen(
-                        vm,
-                        state,
-                        route.courseId,
-                        route.position,
-                        openDriver = { nav.navigate(LeaderboardDriverRoute(route.courseId, it)) },
-                    )
+                    EGRefreshBox(vm::reloadLeaderboard) {
+                        LeaderboardDriverScreen(
+                            vm,
+                            state,
+                            route.courseId,
+                            route.position,
+                            openDriver = { nav.navigate(LeaderboardDriverRoute(route.courseId, it)) },
+                        )
+                    }
                 }
                 composable<AccelerationRoute> {
-                    AccelerationScreen(vm, state, openEntry = { nav.navigate(AccelerationEntryRoute(it)) })
+                    EGRefreshBox(vm::reloadAcceleration) {
+                        AccelerationScreen(vm, state, openEntry = { nav.navigate(AccelerationEntryRoute(it)) })
+                    }
                 }
                 composable<AccelerationEntryRoute> { backStackEntry ->
-                    AccelerationEntryScreen(vm, state, backStackEntry.toRoute<AccelerationEntryRoute>().id)
+                    EGRefreshBox(vm::reloadAcceleration) {
+                        AccelerationEntryScreen(vm, state, backStackEntry.toRoute<AccelerationEntryRoute>().id)
+                    }
                 }
             }
         }

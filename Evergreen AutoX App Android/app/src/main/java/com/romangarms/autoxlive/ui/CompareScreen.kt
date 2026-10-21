@@ -54,7 +54,7 @@ fun CompareScreen(vm: AppViewModel, state: AppState, a: String, b: String) {
     val driverA = state.driver(a)
     val driverB = state.driver(b)
     if (driverA == null || driverB == null) {
-        MissingCompare(vm, state)
+        EGPullable { MissingCompare(vm, state) }
         return
     }
     Column(

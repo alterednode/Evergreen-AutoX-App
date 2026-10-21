@@ -927,7 +927,7 @@ final class AppModel {
         Task { await fetchLeaderboard(courseID: courseID) }
     }
 
-    private func fetchLeaderboard(courseID: Int) async {
+    func fetchLeaderboard(courseID: Int) async {
         leaderboardError = nil
         func stillOpen() -> Bool {
             switch screen {
@@ -952,7 +952,7 @@ final class AppModel {
         Task { await fetchAcceleration() }
     }
 
-    private func fetchAcceleration() async {
+    func fetchAcceleration() async {
         accelerationError = nil
         do {
             let entries = try await fetch { try await $0.acceleration() }
@@ -1035,17 +1035,33 @@ final class AppModel {
         isLoading = false
     }
 
+    // Pulling down on a results page. With nothing showing, the event may
+    // have gained its first session since it was opened, so it is reopened.
+    func reloadResults() async {
+        if drivers.isEmpty, let eventID = selectedEventID {
+            await selectEvent(eventID, remember: false)
+        } else if selectedEventID == nil {
+            await loadEvents()
+        } else {
+            await loadSessionData()
+        }
+    }
+
     // The automatic reload: no spinner, and a failure leaves the last results
     // up, marked as old, rather than replacing a live board with an error.
     func refreshSessionData() async {
         lastSessionLoad = .now
-        guard let sessionID = selectedSessionID, !isLoading else { return }
+        guard !isLoading else { return }
         // Speedhive adds sessions through the day; GGLC has only the one.
         if let eventID = selectedEventID, eventID > 0,
            let fetched = try? await client.sessions(eventID: eventID),
            selectedEventID == eventID, fetched != sessions {
             sessions = fetched
+            if selectedSessionID == nil {
+                selectedSessionID = Self.latestSession(fetched)?.id
+            }
         }
+        guard let sessionID = selectedSessionID else { return }
         let loaded = try? await client.drivers(sessionID: sessionID)
         guard selectedSessionID == sessionID else { return }
         guard let loaded else {

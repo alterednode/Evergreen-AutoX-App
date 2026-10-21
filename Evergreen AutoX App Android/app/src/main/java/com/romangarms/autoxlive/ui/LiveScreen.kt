@@ -68,7 +68,7 @@ private fun naturalCompare(a: String, b: String): Int {
 @Composable
 fun LiveScreen(vm: AppViewModel, state: AppState, openDriver: (String) -> Unit) {
     if (state.drivers.isEmpty()) {
-        StatusView(vm, state)
+        EGRefreshBox(vm::reloadResults) { EGPullable { StatusView(vm, state) } }
         return
     }
     var pickingMe by rememberSaveable { mutableStateOf(false) }
@@ -234,6 +234,7 @@ private fun ResultRow(
     val subtitle = buildList {
         if (nickname != null) add(driver.name)
         if (byClass) add("P${driver.position} overall") else driver.carClass?.let { add(it) }
+        driver.vehicle?.let { add(it) }
     }.joinToString(" · ")
 
     Column(

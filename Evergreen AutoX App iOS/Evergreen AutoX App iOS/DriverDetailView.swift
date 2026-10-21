@@ -10,6 +10,8 @@ struct DriverDetailView: View {
             detail(driver)
         } else {
             StatusView()
+                .scrollsToRefresh()
+                .refreshable { await model.reloadResults() }
         }
     }
 
@@ -37,6 +39,11 @@ struct DriverDetailView: View {
                     if nickname != nil {
                         Text(driver.name)
                             .egFont(12)
+                            .foregroundStyle(Color.egGrayDark)
+                    }
+                    if let vehicle = driver.vehicle {
+                        Text(vehicle)
+                            .egFont(14, weight: .semibold)
                             .foregroundStyle(Color.egGrayDark)
                     }
                     HStack(spacing: 6) {
@@ -82,6 +89,7 @@ struct DriverDetailView: View {
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .refreshable { await model.reloadResults() }
         .sheet(isPresented: $pickingMe) {
             EGSheetFrame(
                 title: "Which driver is you?",

@@ -129,6 +129,7 @@ struct LeaderboardView: View {
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .refreshable { await model.fetchLeaderboard(courseID: courseID) }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .task { await model.loadSubmissions() }
         .sheet(item: $sheet) { sheet in
@@ -276,6 +277,8 @@ struct LeaderboardDriverView: View {
                 .foregroundStyle(Color.egGrayDark)
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scrollsToRefresh()
+                .refreshable { await model.fetchLeaderboard(courseID: courseID) }
         }
     }
 
@@ -380,6 +383,7 @@ struct LeaderboardDriverView: View {
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .refreshable { await model.fetchLeaderboard(courseID: courseID) }
         .sheet(item: $reportTarget) { target in
             ReportSheet(target: target, subject: "\(driver.name)'s run on \(course?.name ?? "this leaderboard")") {
                 showNotice("Report sent. Thanks.")

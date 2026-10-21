@@ -363,6 +363,23 @@ class AppViewModel(
         viewModelScope.launch { loadSessionData() }
     }
 
+    // Pulling down on a results page. With nothing showing, the event may
+    // have gained its first session since it was opened, so it is reopened.
+    suspend fun reloadResults() {
+        val eventId = current.selectedEventId
+        when {
+            eventId == null -> loadEvents()
+            current.drivers.isEmpty() -> selectEvent(eventId, remember = false)
+            else -> loadSessionData()
+        }
+    }
+
+    suspend fun reloadLeaderboard() {
+        current.openCourseId?.let { fetchLeaderboard(it) }
+    }
+
+    suspend fun reloadAcceleration() = fetchAcceleration()
+
     suspend fun loadSessionData() {
         val sessionId = current.selectedSessionId ?: return
         _state.update { it.copy(isLoading = true, errorMessage = null) }
@@ -384,16 +401,18 @@ class AppViewModel(
     // their drivers to whatever positions the new times give them.
     suspend fun refreshSessionData() {
         lastSessionLoad = System.currentTimeMillis()
-        val sessionId = current.selectedSessionId ?: return
         if (current.isLoading) return
         val eventId = current.selectedEventId
         // Speedhive adds sessions through the day; GGLC has only the one.
         if (eventId != null && eventId > 0) {
             val fetched = runCatching { api.sessions(eventId) }.getOrNull()
             if (fetched != null && current.selectedEventId == eventId && fetched != current.sessions) {
-                _state.update { it.copy(sessions = fetched) }
+                _state.update {
+                    it.copy(sessions = fetched, selectedSessionId = it.selectedSessionId ?: AppState.latestSession(fetched)?.id)
+                }
             }
         }
+        val sessionId = current.selectedSessionId ?: return
         val loaded = runCatching { api.drivers(sessionId) }.getOrNull()
         if (current.selectedSessionId != sessionId) return
         if (loaded == null) {

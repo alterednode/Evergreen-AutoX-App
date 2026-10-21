@@ -11,6 +11,8 @@ struct CompareView: View {
             compare(a, b)
         } else {
             StatusView()
+                .scrollsToRefresh()
+                .refreshable { await model.reloadResults() }
         }
     }
 
@@ -49,6 +51,7 @@ struct CompareView: View {
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .refreshable { await model.reloadResults() }
     }
 
     private func statGrid(_ a: Driver, _ b: Driver) -> some View {

@@ -332,11 +332,13 @@ fun LeaderboardDriverScreen(
 ) {
     val entry = state.leaderboardEntry(position)?.takeIf { state.leaderboardDetail?.course?.id == courseId }
     if (entry == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            if (state.leaderboardDetail == null && state.leaderboardError == null) {
-                LBProgress()
-            } else {
-                LBStatusMessage("This driver is no longer on the leaderboard.")
+        EGPullable {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (state.leaderboardDetail == null && state.leaderboardError == null) {
+                    LBProgress()
+                } else {
+                    LBStatusMessage("This driver is no longer on the leaderboard.")
+                }
             }
         }
         return

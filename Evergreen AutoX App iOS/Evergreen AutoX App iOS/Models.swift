@@ -95,6 +95,12 @@ struct GGLCDriver: Codable {
     let carClass: String
     let indexed: Double?
     let runs: [GGLCRun]
+
+    // Some entrants type the make into the model column too ("Nissan Nissan").
+    var carName: String {
+        let parts = model.lowercased() == make.lowercased() ? [make] : [make, model]
+        return parts.filter { !$0.isEmpty }.joined(separator: " ")
+    }
 }
 
 struct GGLCRun: Codable {
@@ -584,6 +590,7 @@ struct Driver: Identifiable {
     let name: String
     let startNumber: String
     let carClass: String?
+    var vehicle: String?
     let positionInClass: Int?
     let runs: [Run]
     // GGLC scores only the first 5 runs; we rank by best of all runs instead.
@@ -623,7 +630,7 @@ struct Driver: Identifiable {
     // GGLC "total" already includes cone penalties (1s/cone).
     init(position: Int, gglc: GGLCDriver, carClass: String?, positionInClass: Int?) {
         self.position = position
-        let carName = [gglc.make, gglc.model].filter { !$0.isEmpty }.joined(separator: " ")
+        let carName = gglc.carName
         name = if !gglc.name.isEmpty {
             gglc.name
         } else if !carName.isEmpty {
@@ -635,6 +642,9 @@ struct Driver: Identifiable {
         }
         startNumber = gglc.car.isEmpty ? "P\(position)" : gglc.car
         self.carClass = carClass
+        if !carName.isEmpty, carName != name, carName.lowercased() != carClass?.lowercased() {
+            vehicle = carName
+        }
         self.positionInClass = positionInClass
         officialRunNumber = gglc.runs.first { $0.best && $0.total != nil }?.run
         bestTimeString = nil

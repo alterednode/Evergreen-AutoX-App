@@ -13,6 +13,8 @@ struct LiveView: View {
     var body: some View {
         if model.drivers.isEmpty {
             StatusView()
+                .scrollsToRefresh()
+                .refreshable { await model.reloadResults() }
         } else {
             VStack(spacing: 0) {
                 if isPickingMe || model.showsMePrompt {
@@ -178,6 +180,16 @@ struct StatusView: View {
     }
 }
 
+extension View {
+    // Pull to refresh only works on a scroll view, so a page with nothing to
+    // scroll still needs one.
+    func scrollsToRefresh() -> some View {
+        ScrollView {
+            containerRelativeFrame([.horizontal, .vertical])
+        }
+    }
+}
+
 struct ResultRowView: View {
     @Environment(AppModel.self) private var model
     let driver: Driver
@@ -279,6 +291,7 @@ struct ResultRowView: View {
         } else if let carClass = driver.carClass {
             parts.append(carClass)
         }
+        if let vehicle = driver.vehicle { parts.append(vehicle) }
         return parts.joined(separator: " · ")
     }
 }

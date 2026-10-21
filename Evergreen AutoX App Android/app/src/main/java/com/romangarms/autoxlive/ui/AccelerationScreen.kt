@@ -186,11 +186,13 @@ fun AccelerationEntryScreen(vm: AppViewModel, state: AppState, id: Int) {
     val entries = state.accelerationEntries
     val index = entries?.indexOfFirst { it.id == id } ?: -1
     if (entries == null || index < 0) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            if (entries == null && state.accelerationError == null) {
-                LBProgress()
-            } else {
-                LBStatusMessage("This entry is no longer on the board.")
+        EGPullable {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (entries == null && state.accelerationError == null) {
+                    LBProgress()
+                } else {
+                    LBStatusMessage("This entry is no longer on the board.")
+                }
             }
         }
         return

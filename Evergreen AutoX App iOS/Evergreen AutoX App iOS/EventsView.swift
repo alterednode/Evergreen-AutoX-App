@@ -245,6 +245,7 @@ struct EventsView: View {
             .overlay(alignment: .top) {
                 Color.egHairline.frame(height: 1)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
