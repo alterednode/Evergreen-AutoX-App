@@ -291,6 +291,9 @@ class Watcher:
         self.org_id = org_id
         # Run keys already seen per event and car. An event's first poll only
         # records what is there, so a restart or a new follower sends nothing old.
+        # Keys are never dropped while the event is polled: GGLC's page comes
+        # back with rows or tables missing while it is being republished, and
+        # forgetting them would send every car's last run again once it is whole.
         self.seen: dict[int, dict[str, set[str]]] = {}
 
     def _todays_events(self, today: date) -> list[int]:
@@ -333,12 +336,16 @@ class Watcher:
                 log.exception("Could not load event %s", event_id)
                 continue
             before = self.seen.get(event_id)
-            self.seen[event_id] = {car.key: {r.key for r in car.runs} for car in cars}
             if before is None:
+                self.seen[event_id] = {
+                    car.key: {r.key for r in car.runs} for car in cars
+                }
                 continue
             fresh = {}
             for car in cars:
-                new = [r for r in car.runs if r.key not in before.get(car.key, set())]
+                seen = before.setdefault(car.key, set())
+                new = [r for r in car.runs if r.key not in seen]
+                seen.update(r.key for r in new)
                 if new:
                     fresh[car.key] = new[-1]
             if fresh:

@@ -168,6 +168,26 @@ def test_new_gglc_runs_notify_me_and_friends(client, device):
     assert watcher.poll(TODAY) == []
 
 
+def test_a_page_caught_mid_upload_does_not_resend_runs(client, device):
+    setup(device, client)
+    fake = FakeUpstream()
+    whole = gglc_page(
+        {"12": ("Roman G", [gglc_run(1, 50.0)]), "7": ("Alex K", [gglc_run(1, 49.5)])}
+    )
+    fake.gglc = whole
+    watcher = notify.Watcher(fake.as_upstream(), org_id=1)
+    watcher.poll(TODAY)
+    whole["classes"][0]["drivers"][0]["runs"].append(gglc_run(2, 48.5))
+    assert titles(watcher.poll(TODAY)) == ["Run 2: 48.500"]
+
+    fake.gglc = gglc_page({})
+    assert watcher.poll(TODAY) == []
+    fake.gglc = gglc_page({"7": ("Alex K", [])})
+    assert watcher.poll(TODAY) == []
+    fake.gglc = whole
+    assert watcher.poll(TODAY) == []
+
+
 def test_friend_notifications_can_be_turned_off(client, device):
     setup(device, client, notify_friends=False)
     fake = FakeUpstream()
