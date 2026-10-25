@@ -1,9 +1,11 @@
+import http.server
 import threading
 from types import SimpleNamespace
 
 import app
 import cache
 import gglc
+import httpx
 import pytest
 
 
@@ -123,3 +125,29 @@ def test_expired_entries_are_dropped_when_full(clock, monkeypatch):
     clock[0] += 11
     cache.cached("new", 10, lambda: "value")
     assert list(cache._entries) == ["new"]
+
+
+def test_speedhive_errors_do_not_use_up_the_connection_pool():
+    class Unavailable(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):
+            self.send_response(503)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Unavailable)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    transport = app.SpeedhiveTransport(limits=httpx.Limits(max_connections=1))
+    try:
+        with httpx.Client(transport=transport, timeout=2) as speedhive:
+            for _ in range(3):
+                assert (
+                    speedhive.get(f"http://127.0.0.1:{server.server_port}/").status_code
+                    == 503
+                )
+    finally:
+        server.shutdown()

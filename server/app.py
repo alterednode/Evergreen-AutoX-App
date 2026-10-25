@@ -19,6 +19,7 @@ import apple
 import cache
 import db
 import gglc
+import httpx
 import moderation
 import notify
 import push
@@ -73,11 +74,33 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["X-Leaderboard-Key"],
 )
+
+
+class SpeedhiveTransport(httpx.HTTPTransport):
+    """Tries a failed Speedhive request once more.
+
+    Replaces the library's retry transport, which never closes a 429/5xx
+    response before retrying (it crashes in `raise_for_status` first), so each
+    one kept a pooled connection until the pool ran dry and every Speedhive
+    call failed with PoolTimeout until a restart.
+    """
+
+    def handle_request(self, request):
+        try:
+            response = super().handle_request(request)
+        except httpx.TransportError:
+            return super().handle_request(request)
+        if response.status_code in (429, 502, 503, 504):
+            response.close()
+            return super().handle_request(request)
+        return response
+
+
 # The library's default is a 30-second timeout tried four times, which leaves
 # a request hanging for two minutes when Speedhive stalls. The cache serves the
 # last answer meanwhile, so fail fast and try once more at most.
 client = SpeedhiveClient.create(timeout=8.0)
-client.client.get_httpx_client()._transport.max_retries = 1
+client.client.get_httpx_client()._transport = SpeedhiveTransport()
 
 STATIC_DIR = Path(__file__).parent / "static"
 
