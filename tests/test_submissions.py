@@ -244,7 +244,9 @@ def test_deleting_an_account_drops_submissions_to_its_boards(client, device):
 
 def test_ban_clears_what_was_waiting(client, device):
     sam = device("sam")
-    entry = client.post("/api/acceleration", json=ACCEL, headers=sam).json()
+    entry = client.post(
+        "/api/acceleration", json={**ACCEL, "source": "trackaddict"}, headers=sam
+    ).json()
     _submit(client, sam, acceleration=ACCEL)
     banned = client.post(
         "/api/leaderboard/bans",

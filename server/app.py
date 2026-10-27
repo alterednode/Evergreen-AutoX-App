@@ -1173,6 +1173,24 @@ def _run_fields(run: RunIn, actor: Actor) -> dict:
     return fields
 
 
+def _direct_provenance(fields: dict, actor: Actor) -> None:
+    if actor.is_admin:
+        return
+    if fields.get("source") != "trackaddict":
+        raise HTTPException(403, "Typed/photo results require an evidence submission")
+    # CSVs are caller-controlled; this label never means reviewed or verified.
+    fields["source"] = "trackaddict"
+
+
+def _review_edit(row, fields: dict, actor: Actor) -> None:
+    if actor.is_admin:
+        return
+    if row["source"] == "photo":
+        raise HTTPException(403, "Reviewed results require a new submission to edit")
+    if "source" in fields:
+        raise HTTPException(403, "Result provenance cannot be edited")
+
+
 def _insert_row(conn, table: str, fields: dict) -> int:
     cur = conn.execute(
         f"""INSERT INTO {table} ({", ".join(fields)})
@@ -1187,6 +1205,7 @@ def create_run(course_id: int, run: RunIn, actor: WriterDep):
     fields = _run_fields(run, actor)
     with db.session() as conn:
         course = _get_course(conn, course_id, actor)
+        _direct_provenance(fields, actor)
         run_id = _insert_row(
             conn,
             "runs",
@@ -1217,6 +1236,7 @@ def update_run(run_id: int, update: RunUpdate, actor: WriterDep):
         row = _get_run(conn, run_id, actor)
         course = _get_course(conn, row["course_id"], actor)
         _require_run_owner(row, course, actor)
+        _review_edit(row, fields, actor)
         assignments = ", ".join(f"{name} = ?" for name in fields)
         conn.execute(
             f"UPDATE runs SET {assignments} WHERE id = ?",
@@ -2021,6 +2041,7 @@ def _acceleration_fields(entry: AccelerationIn, actor: Actor) -> dict:
 @app.post("/api/acceleration", status_code=201)
 def create_acceleration(entry: AccelerationIn, actor: WriterDep):
     fields = {**_acceleration_fields(entry, actor), "owner_id": actor.device_id}
+    _direct_provenance(fields, actor)
     with db.session() as conn:
         if actor.device_id is not None:
             owned = conn.execute(
@@ -2060,7 +2081,9 @@ def update_acceleration(entry_id: int, update: AccelerationUpdate, actor: Writer
         raise HTTPException(status_code=400, detail="No fields to update")
     _reject_blocked_words(actor, *(fields.get(key) for key in ACCELERATION_TEXT_FIELDS))
     with db.session() as conn:
-        _require_acceleration_owner(_get_acceleration(conn, entry_id, actor), actor)
+        row = _get_acceleration(conn, entry_id, actor)
+        _require_acceleration_owner(row, actor)
+        _review_edit(row, fields, actor)
         assignments = ", ".join(f"{name} = ?" for name in fields)
         conn.execute(
             f"UPDATE acceleration_entries SET {assignments} WHERE id = ?",
@@ -2293,8 +2316,15 @@ def get_submission_proof(submission_id: int, _: AdminDep):
 @app.post("/api/admin/submissions/{submission_id}/approve")
 def approve_submission(submission_id: int, _: AdminDep):
     with db.session() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = _pending_submission(conn, submission_id)
-        fields = {**json.loads(row["payload"]), "owner_id": row["owner_id"]}
+        if not row["proof_file"] or not (db.proof_dir() / row["proof_file"]).is_file():
+            raise HTTPException(409, "Evidence is missing; request a new submission")
+        fields = {
+            **json.loads(row["payload"]),
+            "owner_id": row["owner_id"],
+            "source": "photo",
+        }
         if row["kind"] == "run":
             result_id = _insert_row(
                 conn, "runs", {**fields, "course_id": row["course_id"]}

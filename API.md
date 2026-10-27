@@ -123,3 +123,11 @@ Approving, rejecting or deleting a submission deletes its photo.
 - `GET /dev` — the dev console
 - `GET /android` — the current Android APK, downloaded as `AutoX-Live-<version>.apk`; 404 when there is none
 - `GET /support`, `GET /privacy` — the pages the app's Support and Privacy links open
+
+## Result review policy
+
+Ordinary direct run and acceleration POSTs require `source=trackaddict`, a
+self-reported import label. Typed/photo results require the evidence queue.
+Ordinary PATCHes cannot assign source, and photo results require a new submission
+to edit. Admin creation/correction remains available. Existing labels are unchanged.
+See [result-review notes](docs/security-result-review.md).

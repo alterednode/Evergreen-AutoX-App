@@ -90,7 +90,7 @@ def make_board(client, headers, name="Lot A", **fields) -> dict:
 def post_run(client, headers, course_id: int, driver="Sam"):
     return client.post(
         f"/api/leaderboard/courses/{course_id}/runs",
-        json={"driver": driver, "time": 61.5},
+        json={"source": "trackaddict", "driver": driver, "time": 61.5},
         headers=headers,
     )
 

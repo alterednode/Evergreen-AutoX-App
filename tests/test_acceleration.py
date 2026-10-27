@@ -3,7 +3,12 @@ import db
 import pytest
 from conftest import ADMIN, READ_KEY
 
-ENTRY = {"vehicle": "Nissan Xterra", "driver": "Sam", "zero_to_60_seconds": 12.22}
+ENTRY = {
+    "source": "trackaddict",
+    "vehicle": "Nissan Xterra",
+    "driver": "Sam",
+    "zero_to_60_seconds": 12.22,
+}
 
 
 def _post(client, headers=None, auth=None, **overrides):

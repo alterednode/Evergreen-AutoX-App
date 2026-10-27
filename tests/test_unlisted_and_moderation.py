@@ -19,7 +19,7 @@ def make_board(client, headers, name="Lot Day", unlisted=False):
 def post_run(client, headers, course_id, driver="Driver"):
     r = client.post(
         f"/api/leaderboard/courses/{course_id}/runs",
-        json={"driver": driver, "time": 61.5},
+        json={"source": "trackaddict", "driver": driver, "time": 61.5},
         headers=headers,
     )
     assert r.status_code == 200, r.text
@@ -267,7 +267,7 @@ def banned(client, device):
     run = post_run(client, bad, board["id"], "Bad")
     r = client.post(
         "/api/acceleration",
-        json={"vehicle": "Car", "zero_to_60_seconds": 5},
+        json={"source": "trackaddict", "vehicle": "Car", "zero_to_60_seconds": 5},
         headers=bad,
     )
     assert r.status_code == 201
@@ -346,7 +346,7 @@ def test_ban_follows_the_account_to_another_phone(client, device, banned):
         )
     r = client.post(
         f"/api/leaderboard/courses/{banned['board']['id']}/runs",
-        json={"driver": "B", "time": 1},
+        json={"source": "trackaddict", "driver": "B", "time": 1},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 403
@@ -378,7 +378,7 @@ def test_ban_on_a_device_token_moves_to_the_account_at_sign_in(client, device):
 
     r = client.post(
         f"/api/leaderboard/courses/{board['id']}/runs",
-        json={"driver": "S", "time": 1},
+        json={"source": "trackaddict", "driver": "S", "time": 1},
         headers=sneaky,
     )
     assert r.status_code == 403
@@ -389,15 +389,26 @@ def test_word_filter_applies_to_devices_and_not_admins(client, device):
     board = make_board(client, owner)
     path = f"/api/leaderboard/courses/{board['id']}/runs"
 
-    ok = {"driver": "Dick Hooker", "time": 55, "notes": "damn drag strip"}
+    ok = {
+        "source": "trackaddict",
+        "driver": "Dick Hooker",
+        "time": 55,
+        "notes": "damn drag strip",
+    }
     assert client.post(path, json=ok, headers=owner).status_code == 200
     assert (
         client.post(
-            path, json={"driver": "fuck", "time": 55}, headers=owner
+            path,
+            json={"source": "trackaddict", "driver": "fuck", "time": 55},
+            headers=owner,
         ).status_code
         == 400
     )
     assert (
-        client.post(path, json={"driver": "fuck", "time": 55}, auth=ADMIN).status_code
+        client.post(
+            path,
+            json={"source": "trackaddict", "driver": "fuck", "time": 55},
+            auth=ADMIN,
+        ).status_code
         == 200
     )
