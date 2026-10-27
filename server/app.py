@@ -1173,7 +1173,7 @@ def _run_fields(run: RunIn, actor: Actor) -> dict:
     return fields
 
 
-def _direct_provenance(fields: dict, actor: Actor) -> None:
+def _check_direct_source(fields: dict, actor: Actor) -> None:
     if actor.is_admin:
         return
     if fields.get("source") != "trackaddict":
@@ -1188,7 +1188,7 @@ def _review_edit(row, fields: dict, actor: Actor) -> None:
     if row["source"] == "photo":
         raise HTTPException(403, "Reviewed results require a new submission to edit")
     if "source" in fields:
-        raise HTTPException(403, "Result provenance cannot be edited")
+        raise HTTPException(403, "Result source cannot be edited")
 
 
 def _insert_row(conn, table: str, fields: dict) -> int:
@@ -1205,7 +1205,7 @@ def create_run(course_id: int, run: RunIn, actor: WriterDep):
     fields = _run_fields(run, actor)
     with db.session() as conn:
         course = _get_course(conn, course_id, actor)
-        _direct_provenance(fields, actor)
+        _check_direct_source(fields, actor)
         run_id = _insert_row(
             conn,
             "runs",
@@ -2041,7 +2041,7 @@ def _acceleration_fields(entry: AccelerationIn, actor: Actor) -> dict:
 @app.post("/api/acceleration", status_code=201)
 def create_acceleration(entry: AccelerationIn, actor: WriterDep):
     fields = {**_acceleration_fields(entry, actor), "owner_id": actor.device_id}
-    _direct_provenance(fields, actor)
+    _check_direct_source(fields, actor)
     with db.session() as conn:
         if actor.device_id is not None:
             owned = conn.execute(

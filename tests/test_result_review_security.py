@@ -10,7 +10,7 @@ PROOF = base64.b64encode(b"\xff\xd8\xff" + b"fixture").decode()
 
 
 @pytest.mark.parametrize("kind", ["run", "acceleration"])
-def test_provenance_and_review_edits(client, device, kind):
+def test_source_and_review_edits(client, device, kind):
     owner = device("owner")
     if kind == "run":
         course = client.post(
