@@ -130,4 +130,3 @@ Ordinary direct run and acceleration POSTs require `source=trackaddict`, a
 self-reported import label. Typed/photo results require the evidence queue.
 Ordinary PATCHes cannot assign source, and photo results require a new submission
 to edit. Admin creation/correction remains available. Existing labels are unchanged.
-See [result-review notes](docs/security-result-review.md).

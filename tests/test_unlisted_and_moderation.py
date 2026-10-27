@@ -389,26 +389,15 @@ def test_word_filter_applies_to_devices_and_not_admins(client, device):
     board = make_board(client, owner)
     path = f"/api/leaderboard/courses/{board['id']}/runs"
 
-    ok = {
-        "source": "trackaddict",
-        "driver": "Dick Hooker",
-        "time": 55,
-        "notes": "damn drag strip",
-    }
+    ok = {"source": "trackaddict", "driver": "Dick Hooker", "time": 55, "notes": "damn drag strip"}
     assert client.post(path, json=ok, headers=owner).status_code == 200
     assert (
         client.post(
-            path,
-            json={"source": "trackaddict", "driver": "fuck", "time": 55},
-            headers=owner,
+            path, json={"driver": "fuck", "time": 55}, headers=owner
         ).status_code
         == 400
     )
     assert (
-        client.post(
-            path,
-            json={"source": "trackaddict", "driver": "fuck", "time": 55},
-            auth=ADMIN,
-        ).status_code
+        client.post(path, json={"driver": "fuck", "time": 55}, auth=ADMIN).status_code
         == 200
     )
