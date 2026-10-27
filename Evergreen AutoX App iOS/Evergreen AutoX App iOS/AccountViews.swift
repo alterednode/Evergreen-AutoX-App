@@ -78,7 +78,7 @@ struct AppleSignInButton: View {
             .map { PersonNameComponentsFormatter.localizedString(from: $0, style: .default) }
             .flatMap { $0.isEmpty ? nil : $0 }
         if let shared {
-            DeviceIdentity.appleName = shared
+            DeviceIdentity.setAppleValue(shared, "appleName", for: model.baseURLString)
         }
         await finish(
             PendingSignIn(
@@ -86,11 +86,12 @@ struct AppleSignInButton: View {
                 authorizationCode: credential.authorizationCode.flatMap { String(data: $0, encoding: .utf8) },
                 user: credential.user
             ),
-            name: shared ?? DeviceIdentity.appleName
+            name: shared ?? DeviceIdentity.appleValue("appleName", for: model.baseURLString)
         )
     }
 
     private func finish(_ signIn: PendingSignIn, name: String?) async {
+        let origin = model.baseURLString
         saving = true
         defer { saving = false }
         do {
@@ -100,7 +101,7 @@ struct AppleSignInButton: View {
                 authorizationCode: signIn.authorizationCode,
                 name: name
             )
-            DeviceIdentity.appleUser = signIn.user
+            DeviceIdentity.setAppleValue(signIn.user, "appleUser", for: origin)
             pending = nil
             message = nil
         } catch let error as APIError where error.status == Self.usernameRequired {
@@ -203,8 +204,9 @@ struct AccountSection: View {
             HStack(spacing: 8) {
                 Button("SIGN OUT") {
                     run {
+                        let origin = model.baseURLString
                         try await model.signOut()
-                        DeviceIdentity.appleUser = nil
+                        DeviceIdentity.setAppleValue(nil, "appleUser", for: origin)
                     }
                 }
                 Button("DELETE ACCOUNT") {
@@ -219,9 +221,10 @@ struct AccountSection: View {
             ) {
                 Button("Delete Account and Posts", role: .destructive) {
                     run {
+                        let origin = model.baseURLString
                         try await model.deleteAccount()
-                        DeviceIdentity.appleUser = nil
-                        DeviceIdentity.appleName = nil
+                        DeviceIdentity.setAppleValue(nil, "appleUser", for: origin)
+                        DeviceIdentity.setAppleValue(nil, "appleName", for: origin)
                     }
                 }
             } message: {
@@ -275,12 +278,13 @@ struct AppleCredentialWatcher: ViewModifier {
     }
 
     private func check() async {
-        guard let user = DeviceIdentity.appleUser,
+        let origin = model.baseURLString
+        guard let user = DeviceIdentity.appleValue("appleUser", for: model.baseURLString),
               let state = try? await ASAuthorizationAppleIDProvider().credentialState(forUserID: user),
-              state == .revoked else { return }
+              state == .revoked, origin == model.baseURLString else { return }
         do {
             try await model.signOut()
-            DeviceIdentity.appleUser = nil
+            DeviceIdentity.setAppleValue(nil, "appleUser", for: origin)
         } catch {
             // Still signed in on the server, so the next activation tries again.
         }

@@ -7,6 +7,17 @@ struct APIError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+// Refuse redirects, including same-origin ones: no credential or request body
+// can accidentally be forwarded to a different endpoint or server.
+private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
 struct APIClient {
     let baseURL: URL
     var deviceToken: String?
@@ -32,7 +43,7 @@ struct APIClient {
         config.timeoutIntervalForRequest = requestTimeout
         config.timeoutIntervalForResource = 60
         config.waitsForConnectivity = false
-        return URLSession(configuration: config)
+        return URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
     }
 
     func org(orgID: Int) async throws -> SHOrg {
@@ -235,6 +246,12 @@ struct APIClient {
     ) async throws -> Data {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw APIError(message: "Bad URL: \(baseURL)\(path)")
+        }
+        guard let origin = DeviceIdentity.origin(baseURL.absoluteString),
+              let target = URLComponents(url: url.absoluteURL, resolvingAgainstBaseURL: true),
+              let scheme = target.scheme?.lowercased(), let host = target.host?.lowercased(),
+              "\(scheme)://\(host):\(target.port ?? (scheme == "https" ? 443 : 80))" == origin else {
+            throw APIError(message: "Enter a server origin, without credentials, path, query or fragment")
         }
         var request = URLRequest(url: url)
         request.httpMethod = method

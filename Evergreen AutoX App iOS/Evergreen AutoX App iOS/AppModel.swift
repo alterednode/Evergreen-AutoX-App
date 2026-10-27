@@ -110,15 +110,38 @@ final class AppModel {
     static let defaultBaseURL = "https://autox.romangarms.com"
 
     var devMode: Bool {
-        didSet { defaults.set(devMode, forKey: "devMode") }
+        didSet { defaults.set(devMode, forKey: "devMode"); resetServerState() }
     }
     var customBaseURLString: String {
-        didSet { defaults.set(customBaseURLString, forKey: "serverBaseURL") }
+        didSet { defaults.set(customBaseURLString, forKey: "serverBaseURL"); resetServerState() }
     }
     var baseURLString: String {
         let custom = customBaseURLString.trimmingCharacters(in: .whitespaces)
         return devMode && !custom.isEmpty ? custom : Self.defaultBaseURL
     }
+    private func resetServerState() {
+        account = nil
+        posterName = defaults.string(forKey: posterNameKey) ?? ""
+        leaderboardCourses = []
+        leaderboardDetail = nil
+        blocks = []
+        submissions = []
+        accelerationEntries = nil
+        hiddenCourseIDs = Set((defaults.array(forKey: hiddenCoursesKey) as? [Int]) ?? [])
+        sentPush = nil
+        eventsAge = nil
+        boardsAge = nil
+        driversAge = nil
+        leaderboardAge = nil
+        accelerationAge = nil
+        events = []
+        sessions = []
+        drivers = []
+        selectedEventID = nil
+        selectedSessionID = nil
+        screen = nil
+    }
+
     var orgIDString: String {
         didSet { defaults.set(orgIDString, forKey: "orgID") }
     }
@@ -126,14 +149,22 @@ final class AppModel {
     // account's username also sets it, so every post has to refresh it or a
     // typo would stick.
     var posterName: String {
-        didSet { defaults.set(posterName, forKey: "posterName") }
+        didSet { defaults.set(posterName, forKey: posterNameKey) }
+    }
+    private var posterNameKey: String {
+        let origin = DeviceIdentity.origin(baseURLString) ?? "invalid"
+        return origin == DeviceIdentity.officialOrigin ? "posterName" : "posterName@" + origin
     }
     var acceptedGuidelines: Bool {
         didSet { defaults.set(acceptedGuidelines, forKey: "acceptedGuidelines") }
     }
     // Boards this device chose not to see; the server never learns about it.
     private(set) var hiddenCourseIDs: Set<Int> {
-        didSet { defaults.set(hiddenCourseIDs.sorted(), forKey: "hiddenCourseIDs") }
+        didSet { defaults.set(hiddenCourseIDs.sorted(), forKey: hiddenCoursesKey) }
+    }
+    private var hiddenCoursesKey: String {
+        let origin = DeviceIdentity.origin(baseURLString) ?? "invalid"
+        return origin == DeviceIdentity.officialOrigin ? "hiddenCourseIDs" : "hiddenCourseIDs@" + origin
     }
     private var pinsByEvent: [String: [String]] {
         didSet {
@@ -234,9 +265,14 @@ final class AppModel {
         speedhiveAutoXOnly = defaults.object(forKey: "speedhiveAutoXOnly") as? Bool ?? true
         customBaseURLString = defaults.string(forKey: "serverBaseURL") ?? ""
         orgIDString = defaults.string(forKey: "orgID") ?? ""
-        posterName = defaults.string(forKey: "posterName") ?? ""
+        let customURL = defaults.string(forKey: "serverBaseURL") ?? ""
+        let selectedURL = defaults.bool(forKey: "devMode") && !customURL.isEmpty ? customURL : Self.defaultBaseURL
+        let selectedOrigin = DeviceIdentity.origin(selectedURL) ?? "invalid"
+        let nameKey = selectedOrigin == DeviceIdentity.officialOrigin ? "posterName" : "posterName@" + selectedOrigin
+        posterName = defaults.string(forKey: nameKey) ?? ""
         acceptedGuidelines = defaults.bool(forKey: "acceptedGuidelines")
-        hiddenCourseIDs = Set((defaults.array(forKey: "hiddenCourseIDs") as? [Int]) ?? [])
+        let hideKey = selectedOrigin == DeviceIdentity.officialOrigin ? "hiddenCourseIDs" : "hiddenCourseIDs@" + selectedOrigin
+        hiddenCourseIDs = Set((defaults.array(forKey: hideKey) as? [Int]) ?? [])
         pinsByEvent = (defaults.dictionary(forKey: "pinsByEvent") as? [String: [String]]) ?? [:]
         nicknamesByEvent = (defaults.dictionary(forKey: "nicknamesByEvent") as? [String: [String: String]]) ?? [:]
         meNumberByEvent = (defaults.dictionary(forKey: "meNumberByEvent") as? [String: String]) ?? [:]
@@ -269,19 +305,30 @@ final class AppModel {
     private var client: APIClient {
         APIClient(
             baseURL: URL(string: baseURLString.hasSuffix("/") ? baseURLString : baseURLString + "/") ?? URL(filePath: "/"),
-            deviceToken: DeviceIdentity.token,
+            deviceToken: DeviceIdentity.token(for: baseURLString),
             cache: .shared
         )
+    }
+
+    private func onServer<T>(_ action: (APIClient) async throws -> T) async throws -> T {
+        let origin = baseURLString
+        let result = try await action(client)
+        guard origin == baseURLString else { throw CancellationError() }
+        return result
     }
 
     // Asks the server, or when it can't be reached, takes the answer it gave
     // last time.
     private func fetch<T>(_ load: (APIClient) async throws -> T) async throws -> (value: T, age: DataAge) {
+        let origin = baseURLString
         let client = client
         do {
-            return (try await load(client), DataAge(fetchedAt: .now))
+            let loaded = try await load(client)
+            guard origin == baseURLString else { throw CancellationError() }
+            return (loaded, DataAge(fetchedAt: .now))
         } catch {
             guard APIClient.isUnreachable(error), let saved = await client.fromCache(load) else { throw error }
+            guard origin == baseURLString else { throw CancellationError() }
             return (saved.value, DataAge(fetchedAt: saved.date, refreshFailed: true))
         }
     }
@@ -735,26 +782,26 @@ final class AppModel {
     var hiddenCourseCount: Int { hiddenCourseIDs.count }
 
     func createCourse(_ input: LBCourseInput) async throws {
-        let course = try await client.createCourse(input)
+        let course = try await onServer({ try await $0.createCourse(input) })
         await refreshLeaderboardEvents()
         open(screen: .leaderboard(course.id))
         tab = .boards
     }
 
     func updateCourse(id: Int, _ input: LBCourseInput) async throws {
-        _ = try await client.updateCourse(id: id, input)
+        _ = try await onServer({ try await $0.updateCourse(id: id, input) })
         await refreshLeaderboardEvents()
         loadLeaderboard(courseID: id)
     }
 
     func deleteCourse(id: Int) async throws {
-        try await client.deleteCourse(id: id)
+        try await onServer({ try await $0.deleteCourse(id: id) })
         await refreshLeaderboardEvents()
         leaveLeaderboard(id)
     }
 
     func joinCourse(code: String) async throws {
-        let course = try await client.joinCourse(code: code)
+        let course = try await onServer({ try await $0.joinCourse(code: code) })
         hiddenCourseIDs.remove(course.id)
         await refreshLeaderboardEvents()
         open(screen: .leaderboard(course.id))
@@ -762,7 +809,7 @@ final class AppModel {
     }
 
     func leaveCourse(id: Int) async throws {
-        try await client.leaveCourse(id: id)
+        try await onServer({ try await $0.leaveCourse(id: id) })
         await refreshLeaderboardEvents()
         leaveLeaderboard(id)
     }
@@ -789,26 +836,26 @@ final class AppModel {
     }
 
     func addRun(courseID: Int, _ input: LBRunInput) async throws {
-        _ = try await client.createRun(courseID: courseID, input)
+        _ = try await onServer({ try await $0.createRun(courseID: courseID, input) })
         loadLeaderboard(courseID: courseID)
     }
 
     // Ranks shift after a deletion, so the driver page being viewed may no
     // longer be the same person; the board is the only safe place to land.
     func deleteRun(id: Int, courseID: Int) async throws {
-        try await client.deleteRun(id: id)
+        try await onServer({ try await $0.deleteRun(id: id) })
         screen = .leaderboard(courseID)
         loadLeaderboard(courseID: courseID)
     }
 
     func report(_ target: LBReportTarget, reason: String) async throws {
-        try await client.report(LBReportInput(target: target, reason: reason))
+        try await onServer({ try await $0.report(LBReportInput(target: target, reason: reason)) })
     }
 
     // The server stops sending anything the blocked poster owns, so the open
     // board is reloaded, or left if it was theirs.
     func blockPoster(_ target: LBReportTarget, courseID: Int) async throws {
-        let block = try await client.block(LBBlockInput(target: target))
+        let block = try await onServer({ try await $0.block(LBBlockInput(target: target)) })
         blocks.removeAll { $0.id == block.id }
         blocks.insert(block, at: 0)
         await refreshLeaderboardEvents()
@@ -826,24 +873,24 @@ final class AppModel {
     }
 
     func addAcceleration(_ input: AccelEntryInput) async throws {
-        _ = try await client.createAcceleration(input)
+        _ = try await onServer({ try await $0.createAcceleration(input) })
         loadAcceleration()
     }
 
     func deleteAcceleration(id: Int) async throws {
-        try await client.deleteAcceleration(id: id)
+        try await onServer({ try await $0.deleteAcceleration(id: id) })
         accelerationEntries?.removeAll { $0.id == id }
         screen = .acceleration
         loadAcceleration()
     }
 
     func deleteOtherAccelerationRun(id: Int) async throws {
-        try await client.deleteAcceleration(id: id)
+        try await onServer({ try await $0.deleteAcceleration(id: id) })
         loadAcceleration()
     }
 
     func blockAccelerationPoster(entryID: Int) async throws {
-        let block = try await client.block(LBBlockInput(target: .acceleration(entryID)))
+        let block = try await onServer({ try await $0.block(LBBlockInput(target: .acceleration(entryID))) })
         blocks.removeAll { $0.id == block.id }
         blocks.insert(block, at: 0)
         accelerationEntries?.removeAll { $0.id == entryID }
@@ -853,7 +900,7 @@ final class AppModel {
     }
 
     func unblock(id: Int) async throws {
-        try await client.unblock(id: id)
+        try await onServer({ try await $0.unblock(id: id) })
         blocks.removeAll { $0.id == id }
         await refreshLeaderboardEvents()
     }
@@ -864,15 +911,19 @@ final class AppModel {
     var needsUsername: Bool { signedIn && (account?.name ?? "").isEmpty }
 
     func loadAccount() async {
-        if let loaded = try? await client.account() {
+        let origin = baseURLString
+        if let loaded = try? await onServer({ try await $0.account() }), origin == baseURLString {
             account = loaded
         }
     }
 
     func signIn(identityToken: String, nonce: String, authorizationCode: String?, name: String?) async throws {
-        account = try await client.signInWithApple(
+        let origin = baseURLString
+        let loaded = try await onServer({ try await $0.signInWithApple(
             AppleSignInInput(identityToken: identityToken, nonce: nonce, authorizationCode: authorizationCode, name: name)
-        )
+        ) })
+        guard origin == baseURLString else { throw CancellationError() }
+        account = loaded
         if posterName.isEmpty, let name = account?.name {
             posterName = name
         }
@@ -880,19 +931,28 @@ final class AppModel {
     }
 
     func updateAccountName(_ name: String) async throws {
-        account = try await client.updateAccount(name: name)
+        let origin = baseURLString
+        let loaded = try await onServer({ try await $0.updateAccount(name: name) })
+        guard origin == baseURLString else { throw CancellationError() }
+        account = loaded
         if let name = account?.name {
             posterName = name
         }
     }
 
     func signOut() async throws {
-        account = try await client.signOut()
+        let origin = baseURLString
+        let loaded = try await onServer({ try await $0.signOut() })
+        guard origin == baseURLString else { throw CancellationError() }
+        account = loaded
         await refreshOwnership()
     }
 
     func deleteAccount() async throws {
-        account = try await client.deleteAccount()
+        let origin = baseURLString
+        let loaded = try await onServer({ try await $0.deleteAccount() })
+        guard origin == baseURLString else { throw CancellationError() }
+        account = loaded
         await refreshOwnership()
     }
 
@@ -900,6 +960,7 @@ final class AppModel {
     // counts as this device's, so whatever is on screen is refetched. A board
     // that went with the account is left.
     private func refreshOwnership() async {
+        ResponseCache.shared.prune(olderThan: .distantFuture)
         await refreshLeaderboardEvents()
         await loadBlocks()
         await loadSubmissions()
@@ -912,7 +973,7 @@ final class AppModel {
                 leaveLeaderboard(courseID)
                 return
             }
-            if let detail = try? await client.leaderboardCourse(id: courseID), leaderboardDetail?.course.id == courseID {
+            if let detail = try? await onServer({ try await $0.leaderboardCourse(id: courseID) }), leaderboardDetail?.course.id == courseID {
                 leaderboardDetail = detail
             }
         default:
@@ -921,29 +982,31 @@ final class AppModel {
     }
 
     func loadBlocks() async {
-        if let loaded = try? await client.blocks() {
+        let origin = baseURLString
+        if let loaded = try? await onServer({ try await $0.blocks() }), origin == baseURLString {
             blocks = loaded
         }
     }
 
     func loadSubmissions() async {
-        if let loaded = try? await client.submissions() {
+        let origin = baseURLString
+        if let loaded = try? await onServer({ try await $0.submissions() }), origin == baseURLString {
             submissions = loaded
         }
     }
 
     func submit(_ input: SubmissionInput) async throws {
-        let submission = try await client.submit(input)
+        let submission = try await onServer({ try await $0.submit(input) })
         submissions.insert(submission, at: 0)
     }
 
     func deleteSubmission(id: Int) async throws {
-        try await client.deleteSubmission(id: id)
+        try await onServer({ try await $0.deleteSubmission(id: id) })
         submissions.removeAll { $0.id == id }
     }
 
     func parseTrackAddict(csv: Data) async throws -> [TALap] {
-        try await client.parseTrackAddict(csv: csv).laps
+        try await onServer({ try await $0.parseTrackAddict(csv: csv) }).laps
     }
 
     private func loadLeaderboard(courseID: Int) {
@@ -1079,7 +1142,7 @@ final class AppModel {
         guard !isLoading else { return }
         // Speedhive adds sessions through the day; GGLC has only the one.
         if let eventID = selectedEventID, eventID > 0,
-           let fetched = try? await client.sessions(eventID: eventID),
+           let fetched = try? await onServer({ try await $0.sessions(eventID: eventID) }),
            selectedEventID == eventID, fetched != sessions {
             sessions = fetched
             if selectedSessionID == nil {
@@ -1087,7 +1150,7 @@ final class AppModel {
             }
         }
         guard let sessionID = selectedSessionID else { return }
-        let loaded = try? await client.drivers(sessionID: sessionID)
+        let loaded = try? await onServer({ try await $0.drivers(sessionID: sessionID) })
         guard selectedSessionID == sessionID else { return }
         guard let loaded else {
             driversAge?.refreshFailed = true
@@ -1206,8 +1269,8 @@ final class AppModel {
         guard wanted != sentPush else { return }
         do {
             switch wanted {
-            case .off: _ = try await client.clearPush()
-            case .on(let setup): _ = try await client.setPush(setup)
+            case .off: _ = try await onServer({ try await $0.clearPush() })
+            case .on(let setup): _ = try await onServer({ try await $0.setPush(setup) })
             }
             sentPush = wanted
             defaults.set(wanted != .off, forKey: "pushRegistered")

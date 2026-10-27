@@ -192,7 +192,7 @@ struct SettingsView: View {
                 .foregroundStyle(Color.egGrayDark)
                 .fixedSize(horizontal: false, vertical: true)
             Button(copiedDeviceID ? "COPIED" : "COPY DEVICE ID") {
-                UIPasteboard.general.string = DeviceIdentity.token
+                UIPasteboard.general.string = DeviceIdentity.token(for: model.baseURLString)
                 copiedDeviceID = true
                 Task {
                     try? await Task.sleep(for: .seconds(2))
